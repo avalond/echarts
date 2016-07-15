@@ -1,6 +1,8 @@
 define(function (require) {
 
-    var arrayDiff = require('zrender/core/arrayDiff');
+    // var arrayDiff = require('zrender/core/arrayDiff');
+    // 'zrender/core/arrayDiff' has been used before, but it did
+    // not do well in performance when roam with fixed dataZoom window.
 
     function sign(val) {
         return val >= 0 ? 1 : -1;
@@ -33,14 +35,61 @@ define(function (require) {
         return coordSys.dataToPoint(stackedData);
     }
 
+    // function convertToIntId(newIdList, oldIdList) {
+    //     // Generate int id instead of string id.
+    //     // Compare string maybe slow in score function of arrDiff
+
+    //     // Assume id in idList are all unique
+    //     var idIndicesMap = {};
+    //     var idx = 0;
+    //     for (var i = 0; i < newIdList.length; i++) {
+    //         idIndicesMap[newIdList[i]] = idx;
+    //         newIdList[i] = idx++;
+    //     }
+    //     for (var i = 0; i < oldIdList.length; i++) {
+    //         var oldId = oldIdList[i];
+    //         // Same with newIdList
+    //         if (idIndicesMap[oldId]) {
+    //             oldIdList[i] = idIndicesMap[oldId];
+    //         }
+    //         else {
+    //             oldIdList[i] = idx++;
+    //         }
+    //     }
+    // }
+
+    function diffData(oldData, newData) {
+        var diffResult = [];
+
+        newData.diff(oldData)
+            .add(function (idx) {
+                diffResult.push({cmd: '+', idx: idx});
+            })
+            .update(function (newIdx, oldIdx) {
+                diffResult.push({cmd: '=', idx: oldIdx, idx1: newIdx});
+            })
+            .remove(function (idx) {
+                diffResult.push({cmd: '-', idx: idx});
+            })
+            .execute();
+
+        return diffResult;
+    }
+
     return function (
         oldData, newData,
         oldStackedOnPoints, newStackedOnPoints,
         oldCoordSys, newCoordSys
     ) {
+        var diff = diffData(oldData, newData);
 
-        var newIdList = newData.mapArray(newData.getId);
-        var oldIdList = oldData.mapArray(oldData.getId);
+        // var newIdList = newData.mapArray(newData.getId);
+        // var oldIdList = oldData.mapArray(oldData.getId);
+
+        // convertToIntId(newIdList, oldIdList);
+
+        // // FIXME One data ?
+        // diff = arrayDiff(oldIdList, newIdList);
 
         var currPoints = [];
         var nextPoints = [];
@@ -51,10 +100,6 @@ define(function (require) {
         var status = [];
         var sortedIndices = [];
         var rawIndices = [];
-
-        // FIXME One data ?
-        var diff = arrayDiff(oldIdList, newIdList);
-
         var dims = newCoordSys.dimensions;
         for (var i = 0; i < diff.length; i++) {
             var diffItem = diff[i];
@@ -64,8 +109,14 @@ define(function (require) {
             // Which is in case remvoing or add more than one data in the tail or head
             switch (diffItem.cmd) {
                 case '=':
-                    currPoints.push(oldData.getItemLayout(diffItem.idx));
-                    nextPoints.push(newData.getItemLayout(diffItem.idx1));
+                    var currentPt = oldData.getItemLayout(diffItem.idx);
+                    var nextPt = newData.getItemLayout(diffItem.idx1);
+                    // If previous data is NaN, use next point directly
+                    if (isNaN(currentPt[0]) || isNaN(currentPt[1])) {
+                        currentPt = nextPt.slice();
+                    }
+                    currPoints.push(currentPt);
+                    nextPoints.push(nextPt);
 
                     currStackedPoints.push(oldStackedOnPoints[diffItem.idx]);
                     nextStackedPoints.push(newStackedOnPoints[diffItem.idx1]);

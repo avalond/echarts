@@ -5,13 +5,10 @@ define(function(require) {
 
     var DataZoomModel = require('./DataZoomModel');
 
-    return DataZoomModel.extend({
+    var SliderZoomModel = DataZoomModel.extend({
 
         type: 'dataZoom.slider',
 
-        /**
-         * @readOnly
-         */
         layoutMode: 'box',
 
         /**
@@ -20,18 +17,44 @@ define(function(require) {
         defaultOption: {
             show: true,
 
-            left: 'auto',   // Default align to grid rect.
-            right: 'auto',  // Default align to grid rect.
-            top: 'auto',    // Default align to grid rect.
-            bottom: 'auto', // Default align to grid rect.
-            width: 'auto',  // Default align to grid rect.
-            height: 'auto', // Default align to grid rect.
+            // ph => placeholder. Using placehoder here because
+            // deault value can only be drived in view stage.
+            right: 'ph',  // Default align to grid rect.
+            top: 'ph',    // Default align to grid rect.
+            width: 'ph',  // Default align to grid rect.
+            height: 'ph', // Default align to grid rect.
+            left: null,   // Default align to grid rect.
+            bottom: null, // Default align to grid rect.
 
             backgroundColor: 'rgba(47,69,84,0)',    // Background of slider zoom component.
-            dataBackgroundColor: '#ddd',            // Background of data shadow.
-            fillerColor: 'rgba(47,69,84,0.25)',     // Color of selected area.
-            handleColor: 'rgba(47,69,84,0.65)',     // Color of handle.
-            handleSize: 10,
+            // dataBackgroundColor: '#ddd',         // Background coor of data shadow and border of box,
+                                                    // highest priority, remain for compatibility of
+                                                    // previous version, but not recommended any more.
+            dataBackground: {
+                lineStyle: {
+                    color: '#2f4554',
+                    width: 0.5,
+                    opacity: 0.3
+                },
+                areaStyle: {
+                    color: 'rgba(47,69,84,0.3)',
+                    opacity: 0.3
+                }
+            },
+            borderColor: '#ddd',                    // border color of the box. For compatibility,
+                                                    // if dataBackgroundColor is set, borderColor
+                                                    // is ignored.
+
+            fillerColor: 'rgba(167,183,204,0.4)',     // Color of selected area.
+            // handleColor: 'rgba(89,170,216,0.95)',     // Color of handle.
+            // handleIcon: 'path://M4.9,17.8c0-1.4,4.5-10.5,5.5-12.4c0-0.1,0.6-1.1,0.9-1.1c0.4,0,0.9,1,0.9,1.1c1.1,2.2,5.4,11,5.4,12.4v17.8c0,1.5-0.6,2.1-1.3,2.1H6.1c-0.7,0-1.3-0.6-1.3-2.1V17.8z',
+            handleIcon: 'M8.2,13.6V3.9H6.3v9.7H3.1v14.9h3.3v9.7h1.8v-9.7h3.3V13.6H8.2z M9.7,24.4H4.8v-1.4h4.9V24.4z M9.7,19.1H4.8v-1.4h4.9V19.1z',
+            // Percent of the slider height
+            handleSize: '100%',
+
+            handleStyle: {
+                color: '#a7b7cc'
+            },
 
             labelPrecision: null,
             labelFormatter: null,
@@ -45,5 +68,7 @@ define(function(require) {
         }
 
     });
+
+    return SliderZoomModel;
 
 });

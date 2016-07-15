@@ -1,9 +1,5 @@
 define(function (require) {
 
-    function isSymbolNone(symbolType) {
-        return symbolType === 'none';
-    }
-
     return function (seriesType, defaultSymbolType, legendSymbol, ecModel, api) {
 
         // Encoding visual for all series include which is filtered for legend drawing
@@ -31,8 +27,8 @@ define(function (require) {
                 }
                 data.each(function (idx) {
                     var itemModel = data.getItemModel(idx);
-                    var itemSymbolType = itemModel.get('symbol', true);
-                    var itemSymbolSize = itemModel.get('symbolSize', true);
+                    var itemSymbolType = itemModel.getShallow('symbol', true);
+                    var itemSymbolSize = itemModel.getShallow('symbolSize', true);
                     // If has item symbol
                     if (itemSymbolType != null) {
                         data.setItemVisual(idx, 'symbol', itemSymbolType);

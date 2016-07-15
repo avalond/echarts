@@ -11,6 +11,8 @@ define(function(require) {
 
     var layout = {};
 
+    var LOCATION_PARAMS = ['left', 'right', 'top', 'bottom', 'width', 'height'];
+
     function boxLayout(orient, group, gap, maxWidth, maxHeight) {
         var x = 0;
         var y = 0;
@@ -36,7 +38,7 @@ define(function(require) {
                     x = 0;
                     nextX = moveX;
                     y += currentLineMaxSize + gap;
-                    currentLineMaxSize = 0;
+                    currentLineMaxSize = rect.height;
                 }
                 else {
                     currentLineMaxSize = Math.max(currentLineMaxSize, rect.height);
@@ -50,7 +52,7 @@ define(function(require) {
                     x += currentLineMaxSize + gap;
                     y = 0;
                     nextY = moveY;
-                    currentLineMaxSize = 0;
+                    currentLineMaxSize = rect.width;
                 }
                 else {
                     currentLineMaxSize = Math.max(currentLineMaxSize, rect.width);
@@ -227,6 +229,17 @@ define(function(require) {
                 top = containerHeight - height - verticalMargin;
                 break;
         }
+        // If something is wrong and left, top, width, height are calculated as NaN
+        left = left || 0;
+        top = top || 0;
+        if (isNaN(width)) {
+            // Width may be NaN if only one value is given except width
+            width = containerWidth - left - (right || 0);
+        }
+        if (isNaN(height)) {
+            // Height may be NaN if only one value is given except height
+            height = containerHeight - top - (bottom || 0);
+        }
 
         var rect = new BoundingRect(left + margin[3], top + margin[0], width, height);
         rect.margin = margin;
@@ -262,10 +275,10 @@ define(function(require) {
             positionInfo, containerRect, margin
         );
 
-        group.position = [
+        group.attr('position', [
             positionInfo.x - groupRect.x,
             positionInfo.y - groupRect.y
-        ];
+        ]);
     };
 
     /**
@@ -289,11 +302,11 @@ define(function(require) {
      *
      * @param {Object} targetOption
      * @param {Object} newOption
-     * @param {Object} [opt]
+     * @param {Object|string} [opt]
      * @param {boolean} [opt.ignoreSize=false] Some component must has width and height.
      */
     layout.mergeLayoutParam = function (targetOption, newOption, opt) {
-        opt = opt || {};
+        !zrUtil.isObject(opt) && (opt = {});
         var hNames = ['width', 'left', 'right']; // Order by priority.
         var vNames = ['height', 'top', 'bottom']; // Order by priority.
         var hResult = merge(hNames);
@@ -325,23 +338,6 @@ define(function(require) {
             // There is no conflict when merged only has params count
             // little than enoughParamNumber.
             if (mergedValueCount === enoughParamNumber || !newValueCount) {
-                return merged;
-            }
-            else if (mergedValueCount < enoughParamNumber) {
-                // In common way, 'auto' means auto calculate by left/right
-                // or top/bottom. But Some components may auto calculate by
-                // other way (like dataZoom auto by coordnate system). In
-                // that case we can set defualtOption 'auto', and if
-                // mergedValueCount litter than enoughParamNumber, 'auto'
-                // will filtered by priority and returned.
-                var autoCount = 0;
-                each(names, function (name) {
-                    if (merged[name] === 'auto') {
-                        autoCount < enoughParamNumber - mergedValueCount
-                            ? autoCount++
-                            : (merged[name] = null);
-                    }
-                });
                 return merged;
             }
             // Case: newOption: {width: ..., right: ...},
@@ -385,14 +381,19 @@ define(function(require) {
      * @return {Object} Result contains those props.
      */
     layout.getLayoutParams = function (source) {
-        var params = {};
-        source && each(
-            ['left', 'right', 'top', 'bottom', 'width', 'height'],
-            function (name) {
-                source.hasOwnProperty(name) && (params[name] = source[name]);
-            }
-        );
-        return params;
+        return layout.copyLayoutParams({}, source);
+    };
+
+    /**
+     * Retrieve 'left', 'right', 'top', 'bottom', 'width', 'height' from object.
+     * @param {Object} source
+     * @return {Object} Result contains those props.
+     */
+    layout.copyLayoutParams = function (target, source) {
+        source && target && each(LOCATION_PARAMS, function (name) {
+            source.hasOwnProperty(name) && (target[name] = source[name]);
+        });
+        return target;
     };
 
     return layout;

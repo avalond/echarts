@@ -62,7 +62,7 @@ define(function (require) {
                     animateTarget[animateProperty] = layout[animateProperty];
                     graphic[isUpdate? 'updateProps' : 'initProps'](rect, {
                         shape: animateTarget
-                    }, seriesModel);
+                    }, seriesModel, dataIndex);
                 }
                 return rect;
             }
@@ -97,7 +97,7 @@ define(function (require) {
 
                     graphic.updateProps(rect, {
                         shape: layout
-                    }, seriesModel);
+                    }, seriesModel, newIndex);
 
                     data.setItemGraphicEl(newIndex, rect);
 
@@ -113,7 +113,7 @@ define(function (require) {
                             shape: {
                                 width: 0
                             }
-                        }, seriesModel, function () {
+                        }, seriesModel, idx, function () {
                             group.remove(rect);
                         });
                     }
@@ -136,17 +136,21 @@ define(function (require) {
 
             data.eachItemGraphicEl(function (rect, idx) {
                 var itemModel = data.getItemModel(idx);
-                var labelModel = itemModel.getModel('label.normal');
                 var color = data.getItemVisual(idx, 'color');
+                var opacity = data.getItemVisual(idx, 'opacity');
                 var layout = data.getItemLayout(idx);
+                var itemStyleModel = itemModel.getModel('itemStyle.normal');
 
-                var hoverStyle = itemModel.getModel('itemStyle.emphasis').getItemStyle();
+                var hoverStyle = itemModel.getModel('itemStyle.emphasis').getBarItemStyle();
 
-                rect.setStyle(zrUtil.defaults(
+                rect.setShape('r', itemStyleModel.get('barBorderRadius') || 0);
+
+                rect.useStyle(zrUtil.defaults(
                     {
-                        fill: color
+                        fill: color,
+                        opacity: opacity
                     },
-                    itemModel.getModel('itemStyle.normal').getBarItemStyle()
+                    itemStyleModel.getBarItemStyle()
                 ));
 
                 var labelPositionOutside = isHorizontal
@@ -159,7 +163,10 @@ define(function (require) {
                 if (labelModel.get('show')) {
                     setLabel(
                         rectStyle, labelModel, color,
-                        seriesModel.getFormattedLabel(idx, 'normal') || seriesModel.getRawValue(idx),
+                        zrUtil.retrieve(
+                            seriesModel.getFormattedLabel(idx, 'normal'),
+                            seriesModel.getRawValue(idx)
+                        ),
                         labelPositionOutside
                     );
                 }
@@ -169,7 +176,10 @@ define(function (require) {
                 if (hoverLabelModel.get('show')) {
                     setLabel(
                         hoverStyle, hoverLabelModel, color,
-                        seriesModel.getFormattedLabel(idx, 'emphasis') || seriesModel.getRawValue(idx),
+                        zrUtil.retrieve(
+                            seriesModel.getFormattedLabel(idx, 'emphasis'),
+                            seriesModel.getRawValue(idx)
+                        ),
                         labelPositionOutside
                     );
                 }
@@ -191,7 +201,7 @@ define(function (require) {
                             shape: {
                                 width: 0
                             }
-                        }, ecModel, function () {
+                        }, ecModel, el.dataIndex, function () {
                             group.remove(el);
                         });
                     });

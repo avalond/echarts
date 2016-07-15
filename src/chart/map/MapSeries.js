@@ -1,7 +1,6 @@
 define(function (require) {
 
     var List = require('../../data/List');
-    var echarts = require('../../echarts');
     var SeriesModel = require('../../model/Series');
     var zrUtil = require('zrender/core/util');
     var completeDimensions = require('../../data/helper/completeDimensions');
@@ -10,30 +9,15 @@ define(function (require) {
     var encodeHTML = formatUtil.encodeHTML;
     var addCommas = formatUtil.addCommas;
 
-    var dataSelectableMixin = require('../helper/dataSelectableMixin');
+    var dataSelectableMixin = require('../../component/helper/selectableMixin');
 
-    function fillData(dataOpt, geoJson) {
-        var dataNameMap = {};
-        var features = geoJson.features;
-        for (var i = 0; i < dataOpt.length; i++) {
-            dataNameMap[dataOpt[i].name] = dataOpt[i];
-        }
-
-        for (var i = 0; i < features.length; i++) {
-            var name = features[i].properties.name;
-            if (!dataNameMap[name]) {
-                dataOpt.push({
-                    value: NaN,
-                    name: name
-                });
-            }
-        }
-        return dataOpt;
-    }
+    var geoCreator = require('../../coord/geo/geoCreator');
 
     var MapSeries = SeriesModel.extend({
 
         type: 'series.map',
+
+        layoutMode: 'box',
 
         /**
          * Only first map series of same mapType will drawMap
@@ -49,16 +33,16 @@ define(function (require) {
 
         init: function (option) {
 
-            option = this._fillOption(option);
+            option = this._fillOption(option, option.map);
             this.option = option;
 
-            this.$superApply('init', arguments);
+            MapSeries.superApply(this, 'init', arguments);
 
-            this.updateSelectedMap();
+            this.updateSelectedMap(option.data);
         },
 
         getInitialData: function (option) {
-            var dimensions = completeDimensions(['value'], option.data);
+            var dimensions = completeDimensions(['value'], option.data || []);
 
             var list = new List(dimensions, this);
 
@@ -68,41 +52,38 @@ define(function (require) {
         },
 
         mergeOption: function (newOption) {
-            newOption = this._fillOption(newOption);
-            SeriesModel.prototype.mergeOption.call(this, newOption);
-            this.updateSelectedMap();
+            if (newOption.data) {
+                newOption = this._fillOption(newOption, this.option.map);
+            }
+
+            MapSeries.superCall(this, 'mergeOption', newOption);
+
+            this.updateSelectedMap(this.option.data);
         },
 
-        _fillOption: function (option) {
+        _fillOption: function (option, mapName) {
             // Shallow clone
             option = zrUtil.extend({}, option);
 
-            var map = echarts.getMap(option.mapType);
-            var geoJson = map && map.geoJson;
-            geoJson && option.data
-                && (option.data = fillData(option.data, geoJson));
+            option.data = geoCreator.getFilledRegions(option.data, mapName);
 
             return option;
         },
 
-        /**
-         * @param {number} zoom
-         */
-        setRoamZoom: function (zoom) {
-            var roamDetail = this.option.roamDetail;
-            roamDetail && (roamDetail.zoom = zoom);
+        getRawValue: function (dataIndex) {
+            // Use value stored in data instead because it is calculated from multiple series
+            // FIXME Provide all value of multiple series ?
+            return this._data.get('value', dataIndex);
         },
 
         /**
-         * @param {number} x
-         * @param {number} y
+         * Get model of region
+         * @param  {string} name
+         * @return {module:echarts/model/Model}
          */
-        setRoamPan: function (x, y) {
-            var roamDetail = this.option.roamDetail;
-            if (roamDetail) {
-                roamDetail.x = x;
-                roamDetail.y = y;
-            }
+        getRegionModel: function (regionName) {
+            var data = this.getData();
+            return data.getItemModel(data.indexOfName(regionName));
         },
 
         /**
@@ -111,14 +92,16 @@ define(function (require) {
          * @param {number} dataIndex
          */
         formatTooltip: function (dataIndex) {
-            var data = this._data;
+            // FIXME orignalData and data is a bit confusing
+            var data = this.getData();
             var formattedValue = addCommas(this.getRawValue(dataIndex));
             var name = data.getName(dataIndex);
 
             var seriesGroup = this.seriesGroup;
             var seriesNames = [];
             for (var i = 0; i < seriesGroup.length; i++) {
-                if (!isNaN(seriesGroup[i].getRawValue(dataIndex))) {
+                var otherIndex = seriesGroup[i].originalData.indexOfName(name);
+                if (!isNaN(seriesGroup[i].originalData.get('value', otherIndex))) {
                     seriesNames.push(
                         encodeHTML(seriesGroup[i].name)
                     );
@@ -145,13 +128,26 @@ define(function (require) {
             // right
             // bottom
             // width:
-            // height   // 自适应
+            // height
+
+            // Aspect is width / height. Inited to be geoJson bbox aspect
+            // This parameter is used for scale this aspect
+            aspectScale: 0.75,
+
+            ///// Layout with center and size
+            // If you wan't to put map in a fixed size box with right aspect ratio
+            // This two properties may more conveninet
+            // layoutCenter: [50%, 50%]
+            // layoutSize: 100
+
 
             // 数值合并方式，默认加和，可选为：
             // 'sum' | 'average' | 'max' | 'min'
             // mapValueCalculation: 'sum',
             // 地图数值计算结果小数精度
             // mapValuePrecision: 0,
+
+
             // 显示图例颜色标识（系列标识的小圆点），图例开启时有效
             showLegendSymbol: true,
             // 选择模式，默认关闭，可选single，multiple
@@ -160,12 +156,12 @@ define(function (require) {
             // 是否开启缩放及漫游模式
             // roam: false,
 
-            // 在 roam 开启的时候使用
-            roamDetail: {
-                x: 0,
-                y: 0,
-                zoom: 1
-            },
+            // Default on center of map
+            center: null,
+
+            zoom: 1,
+
+            scaleLimit: null,
 
             label: {
                 normal: {
@@ -175,9 +171,9 @@ define(function (require) {
                     }
                 },
                 emphasis: {
-                    show: false,
+                    show: true,
                     textStyle: {
-                        color: '#000'
+                        color: 'rgb(100,0,0)'
                     }
                 }
             },
@@ -191,9 +187,17 @@ define(function (require) {
                 },
                 // 也是选中样式
                 emphasis: {
-                    areaColor: 'rgba(255,215, 0, 0.8)'
+                    areaColor: 'rgba(255,215,0,0.8)'
                 }
             }
+        },
+
+        setZoom: function (zoom) {
+            this.option.zoom = zoom;
+        },
+
+        setCenter: function (center) {
+            this.option.center = center;
         }
     });
 

@@ -3,6 +3,7 @@
         <meta charset="utf-8">
         <script src="esl.js"></script>
         <script src="config.js"></script>
+        <meta name="viewport" content="user-scalable=no,width=device-width,height=device-height">
     </head>
     <body>
         <style>
@@ -29,6 +30,8 @@
                     renderer: 'canvas'
                 });
 
+                var sampling = 'none';
+
                 chart.setOption({
                     title : {
                         text: '雨量流量关系图',
@@ -39,8 +42,16 @@
                         trigger: 'axis',
                         formatter: function(params) {
                             return params[0].name + '<br/>'
-                                + params[0].seriesName + ' : ' + params[0].value + ' (m^3/s)<br/>'
-                                + params[1].seriesName + ' : ' + -params[1].value + ' (mm)';
+                                + (
+                                    params[0]
+                                    ? params[0].seriesName + ' : ' + params[0].value + ' (m^3/s)<br/>'
+                                    : ''
+                                )
+                                + (
+                                    params[1]
+                                    ? params[1].seriesName + ' : ' + -params[1].value + ' (mm)'
+                                    : ''
+                                );
                         },
                         axisPointer: {
                             animation: false
@@ -60,12 +71,21 @@
                             saveAsImage : {show: true}
                         }
                     },
-                    dataZoom : {
-                        show : true,
-                        realtime : true,
-                        start : 0,
-                        end : 100
-                    },
+                    dataZoom: [
+                        {
+                            show: true,
+                            realtime: true,
+                            start: 80,
+                            end: 100
+                        },
+                        {
+                            type: 'inside',
+                            show: true,
+                            realtime: true,
+                            start: 80,
+                            end: 100
+                        }
+                    ],
                     xAxis : [
                         {
                             type : 'category',
@@ -145,6 +165,7 @@
                             name:'流量',
                             type:'line',
                             notShowSymbol: true,
+                            sampling: sampling,
                             hoverAnimation: false,
                             itemStyle: {normal: {areaStyle: {type: 'default'}}},
                             data:[
@@ -155,6 +176,7 @@
                             name:'降雨量',
                             type:'line',
                             yAxisIndex:1,
+                            sampling: sampling,
                             notShowSymbol: true,
                             hoverAnimation: false,
                             itemStyle: {normal: {areaStyle: {type: 'default'}}},

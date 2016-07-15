@@ -26,9 +26,13 @@ define(function (require) {
             // Geo coordinate system
             geoIndex: 0,
 
-            // No blur
-            // Available when heatmap is on geo
-            blurSize: 20
+            blurSize: 30,
+
+            pointSize: 20,
+
+            maxOpacity: 1,
+
+            minOpacity: 0
         }
     });
 });

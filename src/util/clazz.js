@@ -21,50 +21,45 @@ define(function (require) {
     /**
      * @public
      */
-    clazz.enableClassExtend = function (RootClass, preConstruct) {
+    clazz.enableClassExtend = function (RootClass) {
+
+        RootClass.$constructor = RootClass;
         RootClass.extend = function (proto) {
+            var superClass = this;
             var ExtendedClass = function () {
-                preConstruct && preConstruct.apply(this, arguments);
-                RootClass.apply(this, arguments);
+                if (!proto.$constructor) {
+                    superClass.apply(this, arguments);
+                }
+                else {
+                    proto.$constructor.apply(this, arguments);
+                }
             };
 
-            zrUtil.extend(ExtendedClass.prototype, zrUtil.extend({
-                $superCall: function (methodName) {
-                    var args = zrUtil.slice(arguments, 1);
-                    return findSuperMethod(this, methodName).apply(this, args);
-                },
-                $superApply: function (methodName, args) {
-                    return findSuperMethod(this, methodName).apply(this, args);
-                }
-            }, proto));
+            zrUtil.extend(ExtendedClass.prototype, proto);
 
             ExtendedClass.extend = this.extend;
+            ExtendedClass.superCall = superCall;
+            ExtendedClass.superApply = superApply;
             zrUtil.inherits(ExtendedClass, this);
-            ExtendedClass.$superClass = this;
+            ExtendedClass.superClass = superClass;
 
             return ExtendedClass;
         };
     };
 
-    // Find the first method that different with given metod.
-    // If only use closure to implements $superApply and $supperCall,
+    // superCall should have class info, which can not be fetch from 'this'.
     // Consider this case:
     // class A has method f,
-    // class B inherits class A, overrides method f, f call this.$superApply('f'),
+    // class B inherits class A, overrides method f, f call superApply('f'),
     // class C inherits class B, do not overrides method f,
     // then when method of class C is called, dead loop occured.
-    function findSuperMethod(context, methodName) {
-        var SuperClass = context.constructor;
-        var thisMethod = context[methodName];
-        var method;
+    function superCall(context, methodName) {
+        var args = zrUtil.slice(arguments, 2);
+        return this.superClass.prototype[methodName].apply(context, args);
+    }
 
-        while (
-            (SuperClass = SuperClass.$superClass)
-            && (method = SuperClass.prototype[methodName])
-            && method === thisMethod
-        ) {/*jshint noempty:false */}
-
-        return method;
+    function superApply(context, methodName, args) {
+        return this.superClass.prototype[methodName].apply(context, args);
     }
 
     /**
@@ -91,8 +86,10 @@ define(function (require) {
                 componentType = parseClassType(componentType);
 
                 if (!componentType.sub) {
-                    if (storage[componentType.main]) {
-                        throw new Error(componentType.main + 'exists');
+                    if (__DEV__) {
+                        if (storage[componentType.main]) {
+                            console.warn(componentType.main + ' exists.');
+                        }
                     }
                     storage[componentType.main] = Clazz;
                 }
@@ -113,7 +110,7 @@ define(function (require) {
 
             if (throwWhenNotFound && !Clazz) {
                 throw new Error(
-                    'Component ' + componentTypeMain + '.' + (subType || '') + ' not exists'
+                    'Component ' + componentTypeMain + '.' + (subType || '') + ' not exists. Load it first.'
                 );
             }
 
@@ -194,20 +191,21 @@ define(function (require) {
      * @param {string|Array.<string>} properties
      */
     clazz.setReadOnly = function (obj, properties) {
-        if (!zrUtil.isArray(properties)) {
-            properties = properties != null ? [properties] : [];
-        }
-        zrUtil.each(properties, function (prop) {
-            var value = obj[prop];
+        // FIXME It seems broken in IE8 simulation of IE11
+        // if (!zrUtil.isArray(properties)) {
+        //     properties = properties != null ? [properties] : [];
+        // }
+        // zrUtil.each(properties, function (prop) {
+        //     var value = obj[prop];
 
-            Object.defineProperty
-                && Object.defineProperty(obj, prop, {
-                    value: value, writable: false
-                });
-            zrUtil.isArray(obj[prop])
-                && Object.freeze
-                && Object.freeze(obj[prop]);
-        });
+        //     Object.defineProperty
+        //         && Object.defineProperty(obj, prop, {
+        //             value: value, writable: false
+        //         });
+        //     zrUtil.isArray(obj[prop])
+        //         && Object.freeze
+        //         && Object.freeze(obj[prop]);
+        // });
     };
 
     return clazz;

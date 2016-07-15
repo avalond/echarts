@@ -38,42 +38,42 @@ define(function (require) {
             }
         }
 
-        // function changeX(list, isDownList, cx, cy, r, dir) {
-        //     var deltaX;
-        //     var deltaY;
-        //     var length;
-        //     var lastDeltaX = dir > 0
-        //         ? isDownList                // 右侧
-        //             ? Number.MAX_VALUE      // 下
-        //             : 0                     // 上
-        //         : isDownList                // 左侧
-        //             ? Number.MAX_VALUE      // 下
-        //             : 0;                    // 上
+        function changeX(list, isDownList, cx, cy, r, dir) {
+            var lastDeltaX = dir > 0
+                ? isDownList                // 右侧
+                    ? Number.MAX_VALUE      // 下
+                    : 0                     // 上
+                : isDownList                // 左侧
+                    ? Number.MAX_VALUE      // 下
+                    : 0;                    // 上
 
-        //     for (var i = 0, l = list.length; i < l; i++) {
-        //         deltaY = Math.abs(list[i].y - cy);
-        //         length = list[i].length;
-        //         deltaX = (deltaY < r + length)
-        //             ? Math.sqrt(
-        //                   (r + length + 20) * (r + length + 20)
-        //                   - Math.pow(list[i].y - cy, 2)
-        //               )
-        //             : Math.abs(
-        //                   list[i].x - cx
-        //               );
-        //         if (isDownList && deltaX >= lastDeltaX) {
-        //             // 右下，左下
-        //             deltaX = lastDeltaX - 10;
-        //         }
-        //         if (!isDownList && deltaX <= lastDeltaX) {
-        //             // 右上，左上
-        //             deltaX = lastDeltaX + 10;
-        //         }
+            for (var i = 0, l = list.length; i < l; i++) {
+                // Not change x for center label
+                if (list[i].position === 'center') {
+                    continue;
+                }
+                var deltaY = Math.abs(list[i].y - cy);
+                var length = list[i].len;
+                var length2 = list[i].len2;
+                var deltaX = (deltaY < r + length)
+                    ? Math.sqrt(
+                          (r + length + length2) * (r + length + length2)
+                          - deltaY * deltaY
+                      )
+                    : Math.abs(list[i].x - cx);
+                if (isDownList && deltaX >= lastDeltaX) {
+                    // 右下，左下
+                    deltaX = lastDeltaX - 10;
+                }
+                if (!isDownList && deltaX <= lastDeltaX) {
+                    // 右上，左上
+                    deltaX = lastDeltaX + 10;
+                }
 
-        //         list[i].x = cx + deltaX * dir;
-        //         lastDeltaX = deltaX;
-        //     }
-        // }
+                list[i].x = cx + deltaX * dir;
+                lastDeltaX = deltaX;
+            }
+        }
 
         var lastY = 0;
         var delta;
@@ -98,8 +98,8 @@ define(function (require) {
                 upList.push(list[i]);
             }
         }
-        // changeX(downList, true, cx, cy, r, dir);
-        // changeX(upList, false, cx, cy, r, dir);
+        changeX(upList, false, cx, cy, r, dir);
+        changeX(downList, true, cx, cy, r, dir);
     }
 
     function avoidOverlap(labelLayoutList, cx, cy, r, viewWidth, viewHeight) {
@@ -114,12 +114,13 @@ define(function (require) {
             }
         }
 
-        adjustSingleSide(leftList, cx, cy, r, -1, viewWidth, viewHeight);
         adjustSingleSide(rightList, cx, cy, r, 1, viewWidth, viewHeight);
+        adjustSingleSide(leftList, cx, cy, r, -1, viewWidth, viewHeight);
 
         for (var i = 0; i < labelLayoutList.length; i++) {
             var linePoints = labelLayoutList[i].linePoints;
             if (linePoints) {
+                var dist = linePoints[1][0] - linePoints[2][0];
                 if (labelLayoutList[i].x < cx) {
                     linePoints[2][0] = labelLayoutList[i].x + 3;
                 }
@@ -127,6 +128,7 @@ define(function (require) {
                     linePoints[2][0] = labelLayoutList[i].x - 3;
                 }
                 linePoints[1][1] = linePoints[2][1] = labelLayoutList[i].y;
+                linePoints[1][0] = linePoints[2][0] + dist;
             }
         }
     }
@@ -143,7 +145,8 @@ define(function (require) {
 
             var itemModel = data.getItemModel(idx);
             var labelModel = itemModel.getModel('label.normal');
-            var labelPosition = labelModel.get('position');
+            // Use position in normal or emphasis
+            var labelPosition = labelModel.get('position') || itemModel.get('label.emphasis.position');
 
             var labelLineModel = itemModel.getModel('labelLine.normal');
             var labelLineLen = labelLineModel.get('length');
@@ -161,25 +164,23 @@ define(function (require) {
             cx = layout.cx;
             cy = layout.cy;
 
+            var isLabelInside = labelPosition === 'inside' || labelPosition === 'inner';
             if (labelPosition === 'center') {
                 textX = layout.cx;
                 textY = layout.cy;
                 textAlign = 'center';
             }
             else {
-                var isLabelInside = labelPosition === 'inside' || labelPosition === 'inner';
-                var x1 = (isLabelInside ? layout.r / 2 * dx : layout.r * dx) + cx;
-                var y1 = (isLabelInside ? layout.r / 2 * dy : layout.r * dy) + cy;
-
-                // For roseType
-                labelLineLen += r - layout.r;
+                var x1 = (isLabelInside ? (layout.r + layout.r0) / 2 * dx : layout.r * dx) + cx;
+                var y1 = (isLabelInside ? (layout.r + layout.r0) / 2 * dy : layout.r * dy) + cy;
 
                 textX = x1 + dx * 3;
                 textY = y1 + dy * 3;
 
                 if (!isLabelInside) {
-                    var x2 = x1 + dx * labelLineLen;
-                    var y2 = y1 + dy * labelLineLen;
+                    // For roseType
+                    var x2 = x1 + dx * (labelLineLen + r - layout.r);
+                    var y2 = y1 + dy * (labelLineLen + r - layout.r);
                     var x3 = x2 + ((dx < 0 ? -1 : 1) * labelLineLen2);
                     var y3 = y2;
 
@@ -190,7 +191,6 @@ define(function (require) {
 
                 textAlign = isLabelInside ? 'center' : (dx > 0 ? 'left' : 'right');
             }
-            var textBaseline = 'middle';
             var font = labelModel.getModel('textStyle').getFont();
 
             var labelRotate = labelModel.get('rotate')
@@ -198,23 +198,27 @@ define(function (require) {
             var text = seriesModel.getFormattedLabel(idx, 'normal')
                         || data.getName(idx);
             var textRect = textContain.getBoundingRect(
-                text, font, textAlign, textBaseline
+                text, font, textAlign, 'top'
             );
             hasLabelRotate = !!labelRotate;
             layout.label = {
                 x: textX,
                 y: textY,
+                position: labelPosition,
                 height: textRect.height,
-                length: labelLineLen,
-                length2: labelLineLen2,
+                len: labelLineLen,
+                len2: labelLineLen2,
                 linePoints: linePoints,
                 textAlign: textAlign,
-                textBaseline: textBaseline,
+                verticalAlign: 'middle',
                 font: font,
                 rotation: labelRotate
             };
 
-            labelLayoutList.push(layout.label);
+            // Not layout the inside label
+            if (!isLabelInside) {
+                labelLayoutList.push(layout.label);
+            }
         });
         if (!hasLabelRotate && seriesModel.get('avoidLabelOverlap')) {
             avoidOverlap(labelLayoutList, cx, cy, r, viewWidth, viewHeight);

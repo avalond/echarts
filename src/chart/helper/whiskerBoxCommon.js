@@ -5,6 +5,7 @@ define(function(require) {
     var List = require('../../data/List');
     var completeDimensions = require('../../data/helper/completeDimensions');
     var WhiskerBoxDraw = require('../helper/WhiskerBoxDraw');
+    var zrUtil = require('zrender/core/util');
 
     function getItemValue(item) {
         return item.value == null ? item : item.value;
@@ -71,7 +72,7 @@ define(function(require) {
          * @param {string} axisDim 'x' or 'y'
          * @return {Array.<string>} dimensions on the axis.
          */
-        getDimensionsOnAxis: function (axisDim) {
+        coordDimToDataDim: function (axisDim) {
             var dims = this.valueDimensions.slice();
             var baseDim = ['base'];
             var map = {
@@ -82,11 +83,30 @@ define(function(require) {
         },
 
         /**
-         * If horizontal, base axis is x, otherwise y.
+         * @override
+         * @param {string|number} dataDim
+         * @return {string} coord dimension
          */
-        getBaseAxisModel: function () {
+        dataDimToCoordDim: function (dataDim) {
+            var dim;
+
+            zrUtil.each(['x', 'y'], function (coordDim, index) {
+                var dataDims = this.coordDimToDataDim(coordDim);
+                if (zrUtil.indexOf(dataDims, dataDim) >= 0) {
+                    dim = coordDim;
+                }
+            }, this);
+
+            return dim;
+        },
+
+        /**
+         * If horizontal, base axis is x, otherwise y.
+         * @override
+         */
+        getBaseAxis: function () {
             var dim = this._baseAxisDim;
-            return this.ecModel.getComponent(dim + 'Axis', this.get(dim + 'AxisIndex'));
+            return this.ecModel.getComponent(dim + 'Axis', this.get(dim + 'AxisIndex')).axis;
         }
     };
 
@@ -112,15 +132,6 @@ define(function(require) {
             this._whiskerBoxDraw.remove();
         }
     };
-
-    function queryDataIndex(data, payload) {
-        if (payload.dataIndex != null) {
-            return payload.dataIndex;
-        }
-        else if (payload.name != null) {
-            return data.indexOfName(payload.name);
-        }
-    }
 
     return {
         seriesModelMixin: seriesModelMixin,

@@ -35,11 +35,6 @@ define(function (require) {
          * @type {string}
          */
         this.map = map;
-        /**
-         * @param {Array.<string>}
-         * @readOnly
-         */
-        this.dimensions = ['lng', 'lat'];
 
         this._nameCoordMap = {};
 
@@ -52,6 +47,26 @@ define(function (require) {
 
         type: 'geo',
 
+        /**
+         * @param {Array.<string>}
+         * @readOnly
+         */
+        dimensions: ['lng', 'lat'],
+
+        /**
+         * If contain given lng,lat coord
+         * @param {Array.<number>}
+         * @readOnly
+         */
+        containCoord: function (coord) {
+            var regions = this.regions;
+            for (var i = 0; i < regions.length; i++) {
+                if (regions[i].contain(coord)) {
+                    return true;
+                }
+            }
+            return false;
+        },
         /**
          * @param {Object} geoJson
          * @param {Object} [specialAreas]
@@ -130,6 +145,15 @@ define(function (require) {
          */
         getRegion: function (name) {
             return this._regionsMap[name];
+        },
+
+        getRegionByCoord: function (coord) {
+            var regions = this.regions;
+            for (var i = 0; i < regions.length; i++) {
+                if (regions[i].contain(coord)) {
+                    return regions[i];
+                }
+            }
         },
 
         /**

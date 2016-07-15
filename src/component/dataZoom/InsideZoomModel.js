@@ -3,12 +3,15 @@
  */
 define(function(require) {
 
-    var DataZoomModel = require('./DataZoomModel');
+    return require('./DataZoomModel').extend({
 
-    return DataZoomModel.extend({
+        type: 'dataZoom.inside',
 
-        type: 'dataZoom.inside'
-
+        /**
+         * @protected
+         */
+        defaultOption: {
+            zoomLock: false // Whether disable zoom but only pan.
+        }
     });
-
 });

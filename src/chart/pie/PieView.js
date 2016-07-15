@@ -96,16 +96,17 @@ define(function (require) {
 
     var piePieceProto = PiePiece.prototype;
 
-    function getLabelStyle(data, idx, state, labelModel) {
+    function getLabelStyle(data, idx, state, labelModel, labelPosition) {
         var textStyleModel = labelModel.getModel('textStyle');
-        var position = labelModel.get('position');
-        var isLabelInside = position === 'inside' || position === 'inner';
+        var isLabelInside = labelPosition === 'inside' || labelPosition === 'inner';
         return {
             fill: textStyleModel.getTextColor()
                 || (isLabelInside ? '#fff' : data.getItemVisual(idx, 'color')),
+            opacity: data.getItemVisual(idx, 'opacity'),
             textFont: textStyleModel.getFont(),
-            text: data.hostModel.getFormattedLabel(idx, state)
-                || data.getName(idx)
+            text: zrUtil.retrieve(
+                data.hostModel.getFormattedLabel(idx, state), data.getName(idx)
+            )
         };
     }
 
@@ -125,21 +126,22 @@ define(function (require) {
                 shape: {
                     endAngle: layout.endAngle
                 }
-            }, seriesModel);
+            }, seriesModel, idx);
         }
         else {
             graphic.updateProps(sector, {
                 shape: sectorShape
-            }, seriesModel);
+            }, seriesModel, idx);
         }
 
         // Update common style
         var itemStyleModel = itemModel.getModel('itemStyle');
         var visualColor = data.getItemVisual(idx, 'color');
 
-        sector.setStyle(
+        sector.useStyle(
             zrUtil.defaults(
                 {
+                    lineJoin: 'bevel',
                     fill: visualColor
                 },
                 itemStyleModel.getModel('normal').getItemStyle()
@@ -175,7 +177,7 @@ define(function (require) {
             }, 300, 'elasticOut');
         }
         sector.off('mouseover').off('mouseout').off('emphasis').off('normal');
-        if (itemModel.get('hoverAnimation')) {
+        if (itemModel.get('hoverAnimation') && seriesModel.ifEnableAnimation()) {
             sector
                 .on('mouseover', onEmphasis)
                 .on('mouseout', onNormal)
@@ -205,18 +207,18 @@ define(function (require) {
                     [labelLayout.x, labelLayout.y], [labelLayout.x, labelLayout.y], [labelLayout.x, labelLayout.y]
                 ]
             }
-        }, seriesModel);
+        }, seriesModel, idx);
 
         graphic.updateProps(labelText, {
             style: {
                 x: labelLayout.x,
                 y: labelLayout.y
             }
-        }, seriesModel);
+        }, seriesModel, idx);
         labelText.attr({
             style: {
+                textVerticalAlign: labelLayout.verticalAlign,
                 textAlign: labelLayout.textAlign,
-                textBaseline: labelLayout.textBaseline,
                 textFont: labelLayout.font
             },
             rotation: labelLayout.rotation,
@@ -228,8 +230,9 @@ define(function (require) {
         var labelHoverModel = itemModel.getModel('label.emphasis');
         var labelLineModel = itemModel.getModel('labelLine.normal');
         var labelLineHoverModel = itemModel.getModel('labelLine.emphasis');
+        var labelPosition = labelModel.get('position') || labelHoverModel.get('position');
 
-        labelText.setStyle(getLabelStyle(data, idx, 'normal', labelModel));
+        labelText.setStyle(getLabelStyle(data, idx, 'normal', labelModel, labelPosition));
 
         labelText.ignore = labelText.normalIgnore = !labelModel.get('show');
         labelText.hoverIgnore = !labelHoverModel.get('show');
@@ -239,11 +242,12 @@ define(function (require) {
 
         // Default use item visual color
         labelLine.setStyle({
-            stroke: visualColor
+            stroke: visualColor,
+            opacity: data.getItemVisual(idx, 'opacity')
         });
         labelLine.setStyle(labelLineModel.getModel('lineStyle').getLineStyle());
 
-        labelText.hoverStyle = getLabelStyle(data, idx, 'emphasis', labelHoverModel);
+        labelText.hoverStyle = getLabelStyle(data, idx, 'emphasis', labelHoverModel, labelPosition);
         labelLine.hoverStyle = labelLineHoverModel.getModel('lineStyle').getLineStyle();
 
         var smooth = labelLineModel.get('smooth');

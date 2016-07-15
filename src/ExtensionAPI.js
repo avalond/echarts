@@ -5,8 +5,8 @@ define(function(require) {
     var zrUtil = require('zrender/core/util');
 
     var echartsAPIList = [
-        'getDom', 'getZr', 'getWidth', 'getHeight', 'dispatchAction',
-        'on', 'off', 'getDataURL', 'getConnectedDataURL'
+        'getDom', 'getZr', 'getWidth', 'getHeight', 'dispatchAction', 'isDisposed',
+        'on', 'off', 'getDataURL', 'getConnectedDataURL', 'getModel', 'getOption'
     ];
 
     function ExtensionAPI(chartInstance) {

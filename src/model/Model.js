@@ -10,21 +10,21 @@ define(function (require) {
      * @alias module:echarts/model/Model
      * @constructor
      * @param {Object} option
-     * @param {module:echarts/model/Model} parentModel
-     * @param {module:echarts/model/Global} ecModel
+     * @param {module:echarts/model/Model} [parentModel]
+     * @param {module:echarts/model/Global} [ecModel]
      */
     function Model(option, parentModel, ecModel) {
         /**
          * @type {module:echarts/model/Model}
          * @readOnly
          */
-        this.parentModel = parentModel || null;
+        this.parentModel = parentModel;
 
         /**
          * @type {module:echarts/model/Global}
          * @readOnly
          */
-        this.ecModel = ecModel || null;
+        this.ecModel = ecModel;
 
         /**
          * @type {Object}
@@ -32,7 +32,15 @@ define(function (require) {
          */
         this.option = option;
 
-        this.init.apply(this, arguments);
+        // Simple optimization
+        // if (this.init) {
+        //     if (arguments.length <= 4) {
+        //         this.init(option, parentModel, ecModel, extraOpt);
+        //     }
+        //     else {
+        //         this.init.apply(this, arguments);
+        //     }
+        // }
     }
 
     Model.prototype = {
@@ -43,7 +51,7 @@ define(function (require) {
          * Model 的初始化函数
          * @param {Object} option
          */
-        init: function (option) {},
+        init: null,
 
         /**
          * 从新的 Option merge
@@ -69,6 +77,10 @@ define(function (require) {
             var obj = this.option;
             var parentModel = this.parentModel;
             for (var i = 0; i < path.length; i++) {
+                // Ignore empty
+                if (!path[i]) {
+                    continue;
+                }
                 // obj could be number/string/... (like 0)
                 obj = (obj && typeof obj === 'object') ? obj[path[i]] : null;
                 if (obj == null) {

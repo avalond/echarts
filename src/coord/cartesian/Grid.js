@@ -15,7 +15,6 @@ define(function(require, factory) {
     var each = zrUtil.each;
 
     var ifAxisCrossZero = axisHelper.ifAxisCrossZero;
-    var ifAxisNeedsCrossZero = axisHelper.ifAxisNeedsCrossZero;
     var niceScaleExtent = axisHelper.niceScaleExtent;
 
     // 依赖 GridModel, AxisModel 做预处理
@@ -33,7 +32,13 @@ define(function(require, factory) {
         var axisModel = axis.model;
         var labels = axisModel.getFormattedLabels();
         var rect;
-        for (var i = 0; i < labels.length; i++) {
+        var step = 1;
+        var labelCount = labels.length;
+        if (labelCount > 40) {
+            // Simple optimization for large amount of labels
+            step = Math.ceil(labelCount / 40);
+        }
+        for (var i = 0; i < labelCount; i += step) {
             if (!axis.isLabelIgnored(i)) {
                 var singleRect = axisModel.getTextRect(labels[i]);
                 // FIXME consider label rotate
@@ -69,6 +74,8 @@ define(function(require, factory) {
         this._axesList = [];
 
         this._initCartesian(gridModel, ecModel, api);
+
+        this._model = gridModel;
     }
 
     var gridProto = Grid.prototype;
@@ -77,6 +84,49 @@ define(function(require, factory) {
 
     gridProto.getRect = function () {
         return this._rect;
+    };
+
+    gridProto.update = function (ecModel, api) {
+
+        var axesMap = this._axesMap;
+
+        this._updateScale(ecModel, this._model);
+
+        function ifAxisCanNotOnZero(otherAxisDim) {
+            var axes = axesMap[otherAxisDim];
+            for (var idx in axes) {
+                var axis = axes[idx];
+                if (axis && (axis.type === 'category' || !ifAxisCrossZero(axis))) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        each(axesMap.x, function (xAxis) {
+            niceScaleExtent(xAxis, xAxis.model);
+        });
+        each(axesMap.y, function (yAxis) {
+            niceScaleExtent(yAxis, yAxis.model);
+        });
+        // Fix configuration
+        each(axesMap.x, function (xAxis) {
+            // onZero can not be enabled in these two situations
+            // 1. When any other axis is a category axis
+            // 2. When any other axis not across 0 point
+            if (ifAxisCanNotOnZero('y')) {
+                xAxis.onZero = false;
+            }
+        });
+        each(axesMap.y, function (yAxis) {
+            if (ifAxisCanNotOnZero('x')) {
+                yAxis.onZero = false;
+            }
+        });
+
+        // Resize again if containLabel is enabled
+        // FIXME It may cause getting wrong grid size in data processing stage
+        this.resize(this._model, api);
     };
 
     /**
@@ -133,27 +183,36 @@ define(function(require, factory) {
 
     /**
      * @param {string} axisType
-     * @param {number} [axisIndex]
+     * @param {ndumber} [axisIndex]
      */
     gridProto.getAxis = function (axisType, axisIndex) {
-        if (axisIndex != null) {
-            var key = axisType + axisIndex;
-            return this._axesMap[key];
-        }
-        else {
-            // Find first axis with axisType
-            var axesList = this._axesList;
-            for (var i = 0; i < axesList.length; i++) {
-                if (axesList[i].dim === axisType) {
-                    return axesList[i];
+        var axesMapOnDim = this._axesMap[axisType];
+        if (axesMapOnDim != null) {
+            if (axisIndex == null) {
+                // Find first axis
+                for (var name in axesMapOnDim) {
+                    return axesMapOnDim[name];
                 }
             }
+            return axesMapOnDim[axisIndex];
         }
     };
 
     gridProto.getCartesian = function (xAxisIndex, yAxisIndex) {
-        var key = 'x' + xAxisIndex + 'y' + yAxisIndex;
-        return this._coordsMap[key];
+        if (xAxisIndex != null && yAxisIndex != null) {
+            var key = 'x' + xAxisIndex + 'y' + yAxisIndex;
+            return this._coordsMap[key];
+        }
+        else {
+            // When only xAxisIndex or yAxisIndex given, find its first cartesian.
+            for (var i = 0, coordList = this._coordsList; i < coordList.length; i++) {
+                if (coordList[i].getAxis('x').index === xAxisIndex
+                    || coordList[i].getAxis('y').index === yAxisIndex
+                ) {
+                    return coordList[i];
+                }
+            }
+        }
     };
 
     /**
@@ -177,18 +236,20 @@ define(function(require, factory) {
             y: 0
         };
 
+        /// Create axis
         ecModel.eachComponent('xAxis', createAxisCreator('x'), this);
-
         ecModel.eachComponent('yAxis', createAxisCreator('y'), this);
 
         if (!axesCount.x || !axesCount.y) {
-            // api.log('Grid must has at least one x axis and one y axis');
-            // Roll back
+            // Roll back when there no either x or y axis
             this._axesMap = {};
             this._axesList = [];
             return;
         }
 
+        this._axesMap = axesMap;
+
+        /// Create cartesian2d
         each(axesMap.x, function (xAxis, xAxisIndex) {
             each(axesMap.y, function (yAxis, yAxisIndex) {
                 var key = 'x' + xAxisIndex + 'y' + yAxisIndex;
@@ -204,38 +265,6 @@ define(function(require, factory) {
             }, this);
         }, this);
 
-        this._updateCartesianFromSeries(ecModel, gridModel);
-
-        function ifAxisCanNotOnZero(otherAxisDim) {
-            var axes = axesMap[otherAxisDim];
-            return (axes[0] && (axes[0].type === 'category' || !ifAxisCrossZero(axes[0])))
-                || (axes[1] && (axes[1].type === 'category' || !ifAxisCrossZero(axes[1])));
-        }
-
-        // Fix configuration
-        each(axesMap.x, function (xAxis) {
-            // onZero can not be enabled in these two situations
-            // 1. When any other axis is a category axis
-            // 2. When any other axis not across 0 point
-            if (ifAxisCanNotOnZero('y')) {
-                xAxis.onZero = false;
-            }
-            if (ifAxisNeedsCrossZero(xAxis)) {
-                xAxis.scale.unionExtent([0, 0]);
-            }
-            niceScaleExtent(xAxis, xAxis.model);
-        }, this);
-
-        each(axesMap.y, function (yAxis) {
-            if (ifAxisCanNotOnZero('x')) {
-                yAxis.onZero = false;
-            }
-            if (ifAxisNeedsCrossZero(yAxis)) {
-                yAxis.scale.unionExtent([0, 0]);
-            }
-            niceScaleExtent(yAxis, yAxis.model);
-        }, this);
-
         function createAxisCreator(axisType) {
             return function (axisModel, idx) {
                 if (!isAxisUsedInTheGrid(axisModel, gridModel, ecModel)) {
@@ -248,9 +277,9 @@ define(function(require, factory) {
                     if (axisPosition !== 'top' && axisPosition !== 'bottom') {
                         // Default bottom of X
                         axisPosition = 'bottom';
-                    }
-                    if (axisPositionUsed[axisPosition]) {
-                        axisPosition = axisPosition === 'top' ? 'bottom' : 'top';
+                        if (axisPositionUsed[axisPosition]) {
+                            axisPosition = axisPosition === 'top' ? 'bottom' : 'top';
+                        }
                     }
                 }
                 else {
@@ -258,9 +287,9 @@ define(function(require, factory) {
                     if (axisPosition !== 'left' && axisPosition !== 'right') {
                         // Default left of Y
                         axisPosition = 'left';
-                    }
-                    if (axisPositionUsed[axisPosition]) {
-                        axisPosition = axisPosition === 'left' ? 'right' : 'left';
+                        if (axisPositionUsed[axisPosition]) {
+                            axisPosition = axisPosition === 'left' ? 'right' : 'left';
+                        }
                     }
                 }
                 axisPositionUsed[axisPosition] = true;
@@ -284,11 +313,13 @@ define(function(require, factory) {
                 // Inject axisModel into axis
                 axis.model = axisModel;
 
+                // Inject grid info axis
+                axis.grid = this;
+
                 // Index of axis, can be used as key
                 axis.index = idx;
 
                 this._axesList.push(axis);
-                this._axesMap[axisType + idx] = axis;
 
                 axesMap[axisType][idx] = axis;
                 axesCount[axisType]++;
@@ -301,7 +332,11 @@ define(function(require, factory) {
      * @param  {module:echarts/model/Option} option
      * @private
      */
-    gridProto._updateCartesianFromSeries = function (ecModel, gridModel) {
+    gridProto._updateScale = function (ecModel, gridModel) {
+        // Reset scale
+        zrUtil.each(this._axesList, function (axis) {
+            axis.scale.setExtent(Infinity, -Infinity);
+        });
         ecModel.eachSeries(function (seriesModel) {
             if (seriesModel.get('coordinateSystem') === 'cartesian2d') {
                 var xAxisIndex = seriesModel.get('xAxisIndex');
@@ -317,17 +352,19 @@ define(function(require, factory) {
                 }
 
                 var cartesian = this.getCartesian(xAxisIndex, yAxisIndex);
-
                 var data = seriesModel.getData();
+                var xAxis = cartesian.getAxis('x');
+                var yAxis = cartesian.getAxis('y');
+
                 if (data.type === 'list') {
-                    unionExtent(data, cartesian.getAxis('x'), 'x', seriesModel);
-                    unionExtent(data, cartesian.getAxis('y'), 'y', seriesModel);
+                    unionExtent(data, xAxis, seriesModel);
+                    unionExtent(data, yAxis, seriesModel);
                 }
             }
         }, this);
 
-        function unionExtent(data, axis, axisDim, seriesModel) {
-            each(seriesModel.getDimensionsOnAxis(axisDim), function (dim) {
+        function unionExtent(data, axis, seriesModel) {
+            each(seriesModel.coordDimToDataDim(axis.dim), function (dim) {
                 axis.scale.unionExtent(data.getDataExtent(
                     dim, axis.scale.type !== 'ordinal'
                 ));
@@ -377,18 +414,26 @@ define(function(require, factory) {
                 return;
             }
             var xAxisIndex = seriesModel.get('xAxisIndex');
-            // TODO Validate
+            var yAxisIndex = seriesModel.get('yAxisIndex');
             var xAxisModel = ecModel.getComponent('xAxis', xAxisIndex);
+
+            if (__DEV__) {
+                var yAxisModel = ecModel.getComponent('yAxis', yAxisIndex);
+                if (xAxisModel.get('gridIndex') !== yAxisModel.get('gridIndex')) {
+                    throw new Error('xAxis and yAxis must use the same grid');
+                }
+            }
             var grid = grids[xAxisModel.get('gridIndex')];
-            seriesModel.coordinateSystem = grid.getCartesian(
-                xAxisIndex, seriesModel.get('yAxisIndex')
-            );
+            seriesModel.coordinateSystem = grid.getCartesian(xAxisIndex, yAxisIndex);
         });
 
         return grids;
     };
 
-    require('../../CoordinateSystem').register('grid', Grid);
+    // For deciding which dimensions to use when creating list data
+    Grid.dimensions = Cartesian2D.prototype.dimensions;
+
+    require('../../CoordinateSystem').register('cartesian2d', Grid);
 
     return Grid;
 });

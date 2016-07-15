@@ -6,13 +6,15 @@ define(function(require) {
     var formatUtil = require('../util/format');
     var modelUtil = require('../util/model');
     var ComponentModel = require('./Component');
+    var colorPaletteMixin = require('./mixin/colorPalette');
+    var env = require('zrender/core/env');
 
     var encodeHTML = formatUtil.encodeHTML;
     var addCommas = formatUtil.addCommas;
 
     var SeriesModel = ComponentModel.extend({
 
-        type: 'series',
+        type: 'series.__base__',
 
         /**
          * @readOnly
@@ -35,6 +37,11 @@ define(function(require) {
         // PENDING
         legendDataProvider: null,
 
+        /**
+         * Access path of color for visual
+         */
+        visualColorAccessPath: 'itemStyle.normal.color',
+
         init: function (option, parentModel, ecModel, extraOpt) {
 
             /**
@@ -51,9 +58,11 @@ define(function(require) {
              */
             this._dataBeforeProcessed = this.getInitialData(option, ecModel);
 
-            // When using module:echarts/data/Tree or module:echarts/data/Graph,
-            // cloneShallow will cause this._data.graph.data pointing to new data list.
-            // Wo we make this._dataBeforeProcessed first, and then make this._data.
+            // If we reverse the order (make this._data firstly, and then make
+            // this._dataBeforeProcessed by cloneShallow), cloneShallow will
+            // cause this._data.graph.data !== this._data when using
+            // module:echarts/data/Graph or module:echarts/data/Tree.
+            // See module:echarts/data/helper/linkList
             this._data = this._dataBeforeProcessed.cloneShallow();
         },
 
@@ -70,13 +79,15 @@ define(function(require) {
             zrUtil.merge(option, this.getDefaultOption());
 
             // Default label emphasis `position` and `show`
-            modelUtil.defaultEmphasis(
-                option.label, ['position', 'show', 'textStyle', 'distance', 'formatter']
-            );
+            // FIXME Set label in mergeOption
+            modelUtil.defaultEmphasis(option.label, modelUtil.LABEL_OPTIONS);
+
+            this.fillDataTextStyle(option.data);
         },
 
         mergeOption: function (newSeriesOption, ecModel) {
             newSeriesOption = zrUtil.merge(this.option, newSeriesOption, true);
+            this.fillDataTextStyle(newSeriesOption.data);
 
             var data = this.getInitialData(newSeriesOption, ecModel);
             // TODO Merge data?
@@ -84,11 +95,19 @@ define(function(require) {
                 this._data = data;
                 this._dataBeforeProcessed = data.cloneShallow();
             }
-            // FIXME
-            // Default label emphasis `position` and `show`
-            // Do it after option is merged. In case newSeriesOption only
-            // set the value in emphasis
-            // modelUtil.defaultNormalEmphasis(this.option.label);
+        },
+
+        fillDataTextStyle: function (data) {
+            // Default data label emphasis `position` and `show`
+            // FIXME Tree structure data ?
+            // FIXME Performance ?
+            if (data) {
+                for (var i = 0; i < data.length; i++) {
+                    if (data[i] && data[i].label) {
+                        modelUtil.defaultEmphasis(data[i].label, modelUtil.LABEL_OPTIONS);
+                    }
+                }
+            }
         },
 
         /**
@@ -98,10 +117,11 @@ define(function(require) {
         getInitialData: function () {},
 
         /**
+         * @param {string} [dataType]
          * @return {module:echarts/data/List}
          */
-        getData: function () {
-            return this._data;
+        getData: function (dataType) {
+            return dataType == null ? this._data : this._data.getLinkedData(dataType);
         },
 
         /**
@@ -120,20 +140,40 @@ define(function(require) {
         },
 
         /**
-         * Get raw data array given by user
-         * @return {Array.<Object>}
+         * Coord dimension to data dimension.
+         *
+         * By default the result is the same as dimensions of series data.
+         * But in some series data dimensions are different from coord dimensions (i.e.
+         * candlestick and boxplot). Override this method to handle those cases.
+         *
+         * Coord dimension to data dimension can be one-to-many
+         *
+         * @param {string} coordDim
+         * @return {Array.<string>} dimensions on the axis.
          */
-        getRawDataArray: function () {
-            return this.option.data;
+        coordDimToDataDim: function (coordDim) {
+            return [coordDim];
         },
 
         /**
-         * Get dimensions on the given axis.
-         * @param {string} axisDim
-         * @return {Array.<string>} dimensions on the axis.
+         * Convert data dimension to coord dimension.
+         *
+         * @param {string|number} dataDim
+         * @return {string}
          */
-        getDimensionsOnAxis: function (axisDim) {
-            return [axisDim]; // Retunr axisDim default.
+        dataDimToCoordDim: function (dataDim) {
+            return dataDim;
+        },
+
+        /**
+         * Get base axis if has coordinate system and has axis.
+         * By default use coordSys.getBaseAxis();
+         * Can be overrided for some chart.
+         * @return {type} description
+         */
+        getBaseAxis: function () {
+            var coordSys = this.coordinateSystem;
+            return coordSys && coordSys.getBaseAxis && coordSys.getBaseAxis();
         },
 
         // FIXME
@@ -141,30 +181,89 @@ define(function(require) {
          * Default tooltip formatter
          *
          * @param {number} dataIndex
-         * @param {boolean} [mutipleSeries=false]
+         * @param {boolean} [multipleSeries=false]
+         * @param {number} [dataType]
          */
-        formatTooltip: function (dataIndex, mutipleSeries) {
+        formatTooltip: function (dataIndex, multipleSeries, dataType) {
+            function formatArrayValue(value) {
+                return zrUtil.map(value, function (val, idx) {
+                    var dimInfo = data.getDimensionInfo(idx);
+                    var dimType = dimInfo && dimInfo.type;
+                    if (dimType === 'ordinal') {
+                        return val;
+                    }
+                    else if (dimType === 'time') {
+                        return multipleSeries ? '' : formatUtil.formatTime('yyyy/mm/dd hh:mm:ss', val);
+                    }
+                    else {
+                        return addCommas(val);
+                    }
+                }).filter(function (val) {
+                    return !!val;
+                }).join(', ');
+            }
+
             var data = this._data;
+
             var value = this.getRawValue(dataIndex);
             var formattedValue = zrUtil.isArray(value)
-                ? zrUtil.map(value, addCommas).join(', ') : addCommas(value);
+                ? formatArrayValue(value) : addCommas(value);
             var name = data.getName(dataIndex);
+            var color = data.getItemVisual(dataIndex, 'color');
+            var colorEl = '<span style="display:inline-block;margin-right:5px;'
+                + 'border-radius:10px;width:9px;height:9px;background-color:' + color + '"></span>';
 
-            return !mutipleSeries
-                ? (encodeHTML(this.name) + '<br />'
+            var seriesName = this.name;
+            // FIXME
+            if (seriesName === '\0-') {
+                // Not show '-'
+                seriesName = '';
+            }
+            return !multipleSeries
+                ? ((seriesName && encodeHTML(seriesName) + '<br />') + colorEl
                     + (name
                         ? encodeHTML(name) + ' : ' + formattedValue
                         : formattedValue)
                   )
-                : (encodeHTML(this.name) + ' : ' + formattedValue);
+                : (colorEl + encodeHTML(this.name) + ' : ' + formattedValue);
+        },
+
+        /**
+         * @return {boolean}
+         */
+        ifEnableAnimation: function () {
+            if (env.node) {
+                return false;
+            }
+
+            var animationEnabled = this.getShallow('animation');
+            if (animationEnabled) {
+                if (this.getData().count() > this.getShallow('animationThreshold')) {
+                    animationEnabled = false;
+                }
+            }
+            return animationEnabled;
         },
 
         restoreData: function () {
             this._data = this._dataBeforeProcessed.cloneShallow();
-        }
+        },
+
+        getColorFromPalette: function (name, scope) {
+            var ecModel = this.ecModel;
+            // PENDING
+            var color = colorPaletteMixin.getColorFromPalette.call(this, name, scope);
+            if (!color) {
+                color = ecModel.getColorFromPalette(name, scope);
+            }
+            return color;
+        },
+
+        getAxisTooltipDataIndex: null
     });
 
     zrUtil.mixin(SeriesModel, modelUtil.dataFormatMixin);
+    zrUtil.mixin(SeriesModel, colorPaletteMixin);
 
     return SeriesModel;
 });

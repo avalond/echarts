@@ -29,6 +29,8 @@ define(function (require) {
             // 内容格式器：{string}（Template） ¦ {Function}
             // formatter: null
 
+            showDelay: 0,
+
             // 隐藏延迟，单位ms
             hideDelay: 100,
 
@@ -52,6 +54,9 @@ define(function (require) {
             // 提示内边距，单位px，默认各方向内边距为5，
             // 接受数组分别设定上右下左边距，同css
             padding: 5,
+
+            // Extra css text
+            extraCssText: '',
 
             // 坐标轴指示器，坐标轴触发有效
             axisPointer: {

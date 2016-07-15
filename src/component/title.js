@@ -11,6 +11,8 @@ define(function(require) {
 
         type: 'title',
 
+        layoutMode: {type: 'box', ignoreSize: true},
+
         defaultOption: {
             // 一级层叠
             zlevel: 0,
@@ -32,15 +34,20 @@ define(function(require) {
 
             // 'center' ¦ 'left' ¦ 'right'
             // ¦ {number}（x坐标，单位px）
-            left: 'left',
+            left: 0,
             // 'top' ¦ 'bottom' ¦ 'center'
             // ¦ {number}（y坐标，单位px）
-            top: 'top',
+            top: 0,
 
             // 水平对齐
-            // 'auto' | 'left' | 'right'
-            // 默认根据 x 的位置判断是左对齐还是右对齐
-            //textAlign: null
+            // 'auto' | 'left' | 'right' | 'center'
+            // 默认根据 left 的位置判断是左对齐还是右对齐
+            // textAlign: null
+            //
+            // 垂直对齐
+            // 'auto' | 'top' | 'bottom' | 'middle'
+            // 默认根据 top 位置判断是上对齐还是下对齐
+            // textBaseline: null
 
             backgroundColor: 'rgba(0,0,0,0)',
 
@@ -59,11 +66,9 @@ define(function(require) {
             textStyle: {
                 fontSize: 18,
                 fontWeight: 'bolder',
-                // 主标题文字颜色
                 color: '#333'
             },
             subtextStyle: {
-                // 副标题文字颜色
                 color: '#aaa'
             }
         }
@@ -87,13 +92,13 @@ define(function(require) {
             var subtextStyleModel = titleModel.getModel('subtextStyle');
 
             var textAlign = titleModel.get('textAlign');
+            var textBaseline = titleModel.get('textBaseline');
 
             var textEl = new graphic.Text({
                 style: {
                     text: titleModel.get('text'),
                     textFont: textStyleModel.getFont(),
-                    fill: textStyleModel.getTextColor(),
-                    textBaseline: 'top'
+                    fill: textStyleModel.getTextColor()
                 },
                 z2: 10
             });
@@ -120,12 +125,12 @@ define(function(require) {
 
             if (link) {
                 textEl.on('click', function () {
-                    window.open(link, titleModel.get('target'));
+                    window.open(link, '_' + titleModel.get('target'));
                 });
             }
             if (sublink) {
                 subTextEl.on('click', function () {
-                    window.open(sublink, titleModel.get('subtarget'));
+                    window.open(sublink, '_' + titleModel.get('subtarget'));
                 });
             }
 
@@ -145,24 +150,41 @@ define(function(require) {
             );
             // Adjust text align based on position
             if (!textAlign) {
-                var p = layoutRect.x / api.getWidth();
-                var p2 = (layoutRect.x + layoutRect.width) / api.getWidth();
-
-                if (p < 0.2) {
-                    textAlign = 'left';
-                }
-                else if (p2 > 0.8) {
-                    layoutRect.x += layoutRect.width;
-                    textAlign = 'right';
-                }
-                else {
-                    layoutRect.x += layoutRect.width / 2;
+                // Align left if title is on the left. center and right is same
+                textAlign = titleModel.get('left') || titleModel.get('right');
+                if (textAlign === 'middle') {
                     textAlign = 'center';
                 }
+                // Adjust layout by text align
+                if (textAlign === 'right') {
+                    layoutRect.x += layoutRect.width;
+                }
+                else if (textAlign === 'center') {
+                    layoutRect.x += layoutRect.width / 2;
+                }
             }
-            group.position = [layoutRect.x, layoutRect.y];
-            textEl.setStyle('textAlign', textAlign);
-            subTextEl.setStyle('textAlign', textAlign);
+            if (!textBaseline) {
+                textBaseline = titleModel.get('top') || titleModel.get('bottom');
+                if (textBaseline === 'center') {
+                    textBaseline = 'middle';
+                }
+                if (textBaseline === 'bottom') {
+                    layoutRect.y += layoutRect.height;
+                }
+                else if (textBaseline === 'middle') {
+                    layoutRect.y += layoutRect.height / 2;
+                }
+
+                textBaseline = textBaseline || 'top';
+            }
+
+            group.attr('position', [layoutRect.x, layoutRect.y]);
+            var alignStyle = {
+                textAlign: textAlign,
+                textVerticalAlign: textBaseline
+            };
+            textEl.setStyle(alignStyle);
+            subTextEl.setStyle(alignStyle);
 
             // Render background
             // Get groupRect again because textAlign has been changed

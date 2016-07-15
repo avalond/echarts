@@ -11,7 +11,7 @@ define(function(require) {
     var each = zrUtil.each;
     var eachAxisDim = modelUtil.eachAxisDim;
 
-    return echarts.extendComponentModel({
+    var DataZoomModel = echarts.extendComponentModel({
 
         type: 'dataZoom',
 
@@ -26,16 +26,24 @@ define(function(require) {
             zlevel: 0,
             z: 4,                   // Higher than normal component (z: 2).
             orient: null,           // Default auto by axisIndex. Possible value: 'horizontal', 'vertical'.
-            xAxisIndex: null,       // Default all horizontal category axis.
-            yAxisIndex: null,       // Default all vertical category axis.
-            filterMode: 'filter',   // 'filter' or 'empty'
+            xAxisIndex: null,       // Default the first horizontal category axis.
+            yAxisIndex: null,       // Default the first vertical category axis.
+            angleAxisIndex: null,
+            radiusAxisIndex: null,
+            filterMode: 'filter',   // Possible values: 'filter' or 'empty'.
                                     // 'filter': data items which are out of window will be removed.
                                     //           This option is applicable when filtering outliers.
                                     // 'empty': data items which are out of window will be set to empty.
                                     //          This option is applicable when user should not neglect
                                     //          that there are some data items out of window.
-            throttle: 100,          // Dispatch action by the fixed rate, avoid frequency.
+                                    // Taking line chart as an example, line will be broken in
+                                    // the filtered points when filterModel is set to 'empty', but
+                                    // be connected when set to 'filter'.
+
+            throttle: null,         // Dispatch action by the fixed rate, avoid frequency.
                                     // default 100. Do not throttle when use null/undefined.
+                                    // If animation === true and animationDurationUpdate > 0,
+                                    // default value is 100, otherwise 20.
             start: 0,               // Start percent. 0 ~ 100
             end: 100,               // End percent. 0 ~ 100
             startValue: null,       // Start value. If startValue specified, start is ignored.
@@ -46,14 +54,6 @@ define(function(require) {
          * @override
          */
         init: function (option, parentModel, ecModel) {
-
-            /**
-             * can be 'axisIndex' or 'orient'
-             *
-             * @private
-             * @type {string}
-             */
-            this._autoMode;
 
             /**
              * key like x_0, y_1
@@ -78,30 +78,51 @@ define(function(require) {
              */
             this.textStyleModel;
 
+            /**
+             * @private
+             */
+            this._autoThrottle = true;
+
+            var rawOption = retrieveRaw(option);
+
             this.mergeDefaultAndTheme(option, ecModel);
-            this.mergeOption({}, true);
+
+            this.doInit(rawOption);
         },
 
         /**
          * @override
          */
-        mergeOption: function (newOption, isInit) {
-            var thisOption = this.option;
+        mergeOption: function (newOption) {
+            var rawOption = retrieveRaw(newOption);
 
-            newOption && zrUtil.merge(thisOption, newOption);
+            //FIX #2591
+            zrUtil.merge(this.option, newOption, true);
+
+            this.doInit(rawOption);
+        },
+
+        /**
+         * @protected
+         */
+        doInit: function (rawOption) {
+            var thisOption = this.option;
 
             // Disable realtime view update if canvas is not supported.
             if (!env.canvasSupported) {
                 thisOption.realtime = false;
             }
 
+            this._setDefaultThrottle(rawOption);
+
+            processRangeProp('start', 'startValue', rawOption, thisOption);
+            processRangeProp('end', 'endValue', rawOption, thisOption);
+
             this.textStyleModel = this.getModel('textStyle');
 
-            this._resetTarget(newOption, isInit);
+            this._resetTarget();
 
             this._giveAxisProxies();
-
-            this._backup();
         },
 
         /**
@@ -130,19 +151,17 @@ define(function(require) {
         /**
          * @private
          */
-        _resetTarget: function (newOption, isInit) {
-
-            this._resetAutoMode(newOption, isInit);
-
+        _resetTarget: function () {
             var thisOption = this.option;
+
+            var autoMode = this._judgeAutoMode();
 
             eachAxisDim(function (dimNames) {
                 var axisIndexName = dimNames.axisIndex;
-                thisOption[axisIndexName] = autoMode === 'axisIndex'
-                    ? [] : modelUtil.normalizeToArray(thisOption[axisIndexName]);
+                thisOption[axisIndexName] = modelUtil.normalizeToArray(
+                    thisOption[axisIndexName]
+                );
             }, this);
-
-            var autoMode = this._autoMode;
 
             if (autoMode === 'axisIndex') {
                 this._autoSetAxisIndex();
@@ -155,39 +174,32 @@ define(function(require) {
         /**
          * @private
          */
-        _resetAutoMode: function (newOption, isInit) {
-            // Consider this case:
-            // There is no axisIndex specified at the begining,
-            // which means that auto choise of axisIndex is required.
-            // Then user modifies series using setOption and do not specify axisIndex either.
-            // At that moment axisIndex should be re-choised, but not remain last choise.
-            // So we keep auto mode util user specified axisIndex or orient in newOption.
-            var option = isInit ? this.option : newOption;
+        _judgeAutoMode: function () {
+            // Auto set only works for setOption at the first time.
+            // The following is user's reponsibility. So using merged
+            // option is OK.
+            var thisOption = this.option;
 
             var hasIndexSpecified = false;
             eachAxisDim(function (dimNames) {
                 // When user set axisIndex as a empty array, we think that user specify axisIndex
                 // but do not want use auto mode. Because empty array may be encountered when
                 // some error occured.
-                if (option[dimNames.axisIndex] != null) {
+                if (thisOption[dimNames.axisIndex] != null) {
                     hasIndexSpecified = true;
                 }
             }, this);
 
-            var orient = option.orient;
+            var orient = thisOption.orient;
 
             if (orient == null && hasIndexSpecified) {
-                // Auto set orient by axisIndex.
-                this._autoMode = 'orient';
+                return 'orient';
             }
-            else {
+            else if (!hasIndexSpecified) {
                 if (orient == null) {
-                    this.option.orient = 'horizontal';
+                    thisOption.orient = 'horizontal';
                 }
-                if (!hasIndexSpecified) {
-                    // Auto set axisIndex by orient.
-                    this._autoMode = 'axisIndex';
-                }
+                return 'axisIndex';
             }
         },
 
@@ -195,8 +207,8 @@ define(function(require) {
          * @private
          */
         _autoSetAxisIndex: function () {
-            var autoAxisIndex = this._autoMode === 'axisIndex';
-            var orient = this.get('orient');
+            var autoAxisIndex = true;
+            var orient = this.get('orient', true);
             var thisOption = this.option;
 
             if (autoAxisIndex) {
@@ -292,18 +304,17 @@ define(function(require) {
         /**
          * @private
          */
-        _backup: function () {
-            this.eachTargetAxis(function (dimNames, axisIndex, dataZoomModel, ecModel) {
-                var axisModel = ecModel.getComponent(dimNames.axis, axisIndex);
-                this.getAxisProxy(dimNames.name, axisIndex).backup(
-                    this,
-                    {
-                        scale: axisModel.get('scale', true),
-                        min: axisModel.get('min', true),
-                        max: axisModel.get('max', true)
-                    }
-                );
-            }, this);
+        _setDefaultThrottle: function (rawOption) {
+            // When first time user set throttle, auto throttle ends.
+            if (rawOption.hasOwnProperty('throttle')) {
+                this._autoThrottle = false;
+            }
+            if (this._autoThrottle) {
+                var globalOption = this.ecModel.option;
+                this.option.throttle =
+                    (globalOption.animation && globalOption.animationDurationUpdate > 0)
+                    ? 100 : 20;
+            }
         },
 
         /**
@@ -356,35 +367,91 @@ define(function(require) {
          */
         setRawRange: function (opt) {
             each(['start', 'end', 'startValue', 'endValue'], function (name) {
+                // If any of those prop is null/undefined, we should alos set
+                // them, because only one pair between start/end and
+                // startValue/endValue can work.
                 this.option[name] = opt[name];
             }, this);
         },
 
         /**
          * @public
-         * @return {Array.<number>}
+         * @return {Array.<number>} [startPercent, endPercent]
          */
         getPercentRange: function () {
+            var axisProxy = this.findRepresentativeAxisProxy();
+            if (axisProxy) {
+                return axisProxy.getDataPercentWindow();
+            }
+        },
+
+        /**
+         * @public
+         * For example, chart.getModel().getComponent('dataZoom').getValueRange('y', 0);
+         *
+         * @param {string} [axisDimName]
+         * @param {number} [axisIndex]
+         * @return {Array.<number>} [startValue, endValue]
+         */
+        getValueRange: function (axisDimName, axisIndex) {
+            if (axisDimName == null && axisIndex == null) {
+                var axisProxy = this.findRepresentativeAxisProxy();
+                if (axisProxy) {
+                    return axisProxy.getDataValueWindow();
+                }
+            }
+            else {
+                return this.getAxisProxy(axisDimName, axisIndex).getDataValueWindow();
+            }
+        },
+
+        /**
+         * @public
+         * @return {module:echarts/component/dataZoom/AxisProxy}
+         */
+        findRepresentativeAxisProxy: function () {
             // Find the first hosted axisProxy
             var axisProxies = this._axisProxies;
             for (var key in axisProxies) {
                 if (axisProxies.hasOwnProperty(key) && axisProxies[key].hostedBy(this)) {
-                    return axisProxies[key].getDataPercentWindow();
+                    return axisProxies[key];
                 }
             }
 
             // If no hosted axis find not hosted axisProxy.
             // Consider this case: dataZoomModel1 and dataZoomModel2 control the same axis,
             // and the option.start or option.end settings are different. The percentRange
-            // show follow axisProxy.
+            // should follow axisProxy.
             // (We encounter this problem in toolbox data zoom.)
             for (var key in axisProxies) {
                 if (axisProxies.hasOwnProperty(key) && !axisProxies[key].hostedBy(this)) {
-                    return axisProxies[key].getDataPercentWindow();
+                    return axisProxies[key];
                 }
             }
         }
 
     });
 
+    function retrieveRaw(option) {
+        var ret = {};
+        each(
+            ['start', 'end', 'startValue', 'endValue', 'throttle'],
+            function (name) {
+                option.hasOwnProperty(name) && (ret[name] = option[name]);
+            }
+        );
+        return ret;
+    }
+
+    function processRangeProp(percentProp, valueProp, rawOption, thisOption) {
+        // start/end has higher priority over startValue/endValue,
+        // but we should make chart.setOption({endValue: 1000}) effective,
+        // rather than chart.setOption({endValue: 1000, end: null}).
+        if (rawOption[valueProp] != null && rawOption[percentProp] == null) {
+            thisOption[percentProp] = null;
+        }
+        // Otherwise do nothing and use the merge result.
+    }
+
+    return DataZoomModel;
 });

@@ -12,10 +12,13 @@ define(function (require) {
 
     echarts.registerLayout(zrUtil.curry(barLayoutGrid, 'bar'));
     // Visual coding for legend
-    echarts.registerVisualCoding('chart', function (ecModel) {
+    echarts.registerVisual(function (ecModel) {
         ecModel.eachSeriesByType('bar', function (seriesModel) {
             var data = seriesModel.getData();
             data.setVisual('legendSymbol', 'roundRect');
         });
     });
+
+    // In case developer forget to include grid component
+    require('../component/grid');
 });

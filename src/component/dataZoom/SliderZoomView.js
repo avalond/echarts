@@ -11,8 +11,7 @@ define(function (require) {
     var sliderMove = require('../helper/sliderMove');
     var asc = numberUtil.asc;
     var bind = zrUtil.bind;
-    var mathRound = Math.round;
-    var mathMax = Math.max;
+    // var mathMax = Math.max;
     var each = zrUtil.each;
 
     // Constants
@@ -24,7 +23,7 @@ define(function (require) {
     var LABEL_GAP = 5;
     var SHOW_DATA_SHADOW_SERIES_TYPE = ['line', 'bar', 'candlestick', 'scatter'];
 
-    return DataZoomView.extend({
+    var SliderZoomView = DataZoomView.extend({
 
         type: 'dataZoom.slider',
 
@@ -65,7 +64,13 @@ define(function (require) {
              * @private
              * @type {number}
              */
-            this._halfHandleSize;
+            this._handleWidth;
+
+            /**
+             * @private
+             * @type {number}
+             */
+            this._handleHeight;
 
             /**
              * @private
@@ -89,7 +94,7 @@ define(function (require) {
          * @override
          */
         render: function (dataZoomModel, ecModel, api, payload) {
-            this.$superApply('render', arguments);
+            SliderZoomView.superApply(this, 'render', arguments);
 
             throttle.createOrUpdate(
                 this,
@@ -99,7 +104,6 @@ define(function (require) {
             );
 
             this._orient = dataZoomModel.get('orient');
-            this._halfHandleSize = mathRound(dataZoomModel.get('handleSize') / 2);
 
             if (this.dataZoomModel.get('show') === false) {
                 this.group.removeAll();
@@ -120,7 +124,7 @@ define(function (require) {
          * @override
          */
         remove: function () {
-            this.$superApply('remove', arguments);
+            SliderZoomView.superApply(this, 'remove', arguments);
             throttle.clear(this, '_dispatchZoomAction');
         },
 
@@ -128,7 +132,7 @@ define(function (require) {
          * @override
          */
         dispose: function () {
-            this.$superApply('dispose', arguments);
+            SliderZoomView.superApply(this, 'dispose', arguments);
             throttle.clear(this, '_dispatchZoomAction');
         },
 
@@ -143,8 +147,10 @@ define(function (require) {
             var barGroup = this._displayables.barGroup = new graphic.Group();
 
             this._renderBackground();
-            this._renderDataShadow();
+
             this._renderHandle();
+
+            this._renderDataShadow();
 
             thisGroup.add(barGroup);
 
@@ -162,12 +168,12 @@ define(function (require) {
             // auto-adapt according to target grid.
             var coordRect = this._findCoordRect();
             var ecSize = {width: api.getWidth(), height: api.getHeight()};
-
             // Default align by coordinate system rect.
-            // Notice: Those params have processed by layout.mergeLayoutParam.
             var positionInfo = this._orient === HORIZONTAL
                 ? {
-                    left: coordRect.x,
+                    // Why using 'right', because right should be used in vertical,
+                    // and it is better to be consistent for dealing with position param merge.
+                    right: ecSize.width - coordRect.x - coordRect.width,
                     top: (ecSize.height - DEFAULT_FILLER_SIZE - DEFAULT_LOCATION_EDGE_GAP),
                     width: coordRect.width,
                     height: DEFAULT_FILLER_SIZE
@@ -179,17 +185,19 @@ define(function (require) {
                     height: coordRect.height
                 };
 
-            zrUtil.each(
-                layout.getLayoutParams(dataZoomModel.option),
-                function (value, name) {
-                    if (value !== 'auto') {
-                        positionInfo[name] = value;
-                    }
+            // Do not write back to option and replace value 'ph', because
+            // the 'ph' value should be recalculated when resize.
+            var layoutParams = layout.getLayoutParams(dataZoomModel.option);
+
+            // Replace the placeholder value.
+            zrUtil.each(['right', 'top', 'width', 'height'], function (name) {
+                if (layoutParams[name] === 'ph') {
+                    layoutParams[name] = positionInfo[name];
                 }
-            );
+            });
 
             var layoutRect = layout.getLayoutRect(
-                positionInfo,
+                layoutParams,
                 ecSize,
                 dataZoomModel.padding
             );
@@ -228,20 +236,14 @@ define(function (require) {
 
             // Position barGroup
             var rect = thisGroup.getBoundingRect([barGroup]);
-            thisGroup.position[0] = location.x - rect.x;
-            thisGroup.position[1] = location.y - rect.y;
+            thisGroup.attr('position', [location.x - rect.x, location.y - rect.y]);
         },
 
         /**
          * @private
          */
         _getViewExtent: function () {
-            // View total length.
-            var halfHandleSize = this._halfHandleSize;
-            var totalLength = mathMax(this._size[0], halfHandleSize * 4);
-            var extent = [halfHandleSize, totalLength - halfHandleSize];
-
-            return extent;
+            return [0, this._size[0]];
         },
 
         _renderBackground : function () {
@@ -255,7 +257,8 @@ define(function (require) {
                 },
                 style: {
                     fill: dataZoomModel.get('backgroundColor')
-                }
+                },
+                z2: -40
             }));
         },
 
@@ -284,8 +287,9 @@ define(function (require) {
 
             var thisShadowExtent = [0, size[0]];
 
-            var points = [[size[0], 0], [0, 0]];
-            var step = thisShadowExtent[1] / data.count();
+            var areaPoints = [[size[0], 0], [0, 0]];
+            var linePoints = [];
+            var step = thisShadowExtent[1] / (data.count() - 1);
             var thisCoord = 0;
 
             // Optimize for large data shadow
@@ -300,16 +304,30 @@ define(function (require) {
                 var otherCoord = (value == null || isNaN(value) || value === '')
                     ? null
                     : linearMap(value, otherDataExtent, otherShadowExtent, true);
-                otherCoord != null && points.push([thisCoord, otherCoord]);
+                if (otherCoord != null) {
+                    areaPoints.push([thisCoord, otherCoord]);
+                    linePoints.push([thisCoord, otherCoord]);
+                }
 
                 thisCoord += step;
             });
 
-            this._displayables.barGroup.add(new graphic.Polyline({
-                shape: {points: points},
-                style: {fill: this.dataZoomModel.get('dataBackgroundColor'), lineWidth: 0},
+            var dataZoomModel = this.dataZoomModel;
+            // var dataBackgroundModel = dataZoomModel.getModel('dataBackground');
+            this._displayables.barGroup.add(new graphic.Polygon({
+                shape: {points: areaPoints},
+                style: zrUtil.defaults(
+                    {fill: dataZoomModel.get('dataBackgroundColor')},
+                    dataZoomModel.getModel('dataBackground.areaStyle').getAreaStyle()
+                ),
                 silent: true,
                 z2: -20
+            }));
+            this._displayables.barGroup.add(new graphic.Polyline({
+                shape: {points: linePoints},
+                style: dataZoomModel.getModel('dataBackground.lineStyle').getLineStyle(),
+                silent: true,
+                z2: -19
             }));
         },
 
@@ -368,17 +386,18 @@ define(function (require) {
             var handleLabels = displaybles.handleLabels = [];
             var barGroup = this._displayables.barGroup;
             var size = this._size;
+            var dataZoomModel = this.dataZoomModel;
 
             barGroup.add(displaybles.filler = new Rect({
                 draggable: true,
                 cursor: 'move',
                 drift: bind(this._onDragMove, this, 'all'),
+                ondragstart: bind(this._showDataInfo, this, true),
                 ondragend: bind(this._onDragEnd, this),
                 onmouseover: bind(this._showDataInfo, this, true),
                 onmouseout: bind(this._showDataInfo, this, false),
                 style: {
-                    fill: this.dataZoomModel.get('fillerColor'),
-                    // text: ':::',
+                    fill: dataZoomModel.get('fillerColor'),
                     textPosition : 'inside'
                 }
             }));
@@ -393,27 +412,47 @@ define(function (require) {
                     height: size[1]
                 },
                 style: {
-                    stroke: this.dataZoomModel.get('dataBackgroundColor'),
+                    stroke: dataZoomModel.get('dataBackgroundColor')
+                        || dataZoomModel.get('borderColor'),
                     lineWidth: DEFAULT_FRAME_BORDER_WIDTH,
                     fill: 'rgba(0,0,0,0)'
                 }
             })));
 
+            var iconStr = dataZoomModel.get('handleIcon');
             each([0, 1], function (handleIndex) {
-
-                barGroup.add(handles[handleIndex] = new Rect({
+                var path = graphic.makePath(iconStr, {
                     style: {
-                        fill: this.dataZoomModel.get('handleColor')
+                        strokeNoScale: true
                     },
-                    cursor: 'move',
+                    rectHover: true,
+                    cursor: this._orient === 'vertical' ? 'ns-resize' : 'ew-resize',
                     draggable: true,
                     drift: bind(this._onDragMove, this, handleIndex),
                     ondragend: bind(this._onDragEnd, this),
                     onmouseover: bind(this._showDataInfo, this, true),
                     onmouseout: bind(this._showDataInfo, this, false)
-                }));
+                }, {
+                    x: -0.5,
+                    y: 0,
+                    width: 1,
+                    height: 1
+                }, 'center');
 
-                var textStyleModel = this.dataZoomModel.textStyleModel;
+                var bRect = path.getBoundingRect();
+                this._handleHeight = numberUtil.parsePercent(dataZoomModel.get('handleSize'), this._size[1]);
+                this._handleWidth = bRect.width / bRect.height * this._handleHeight;
+
+                path.setStyle(dataZoomModel.getModel('handleStyle').getItemStyle());
+                var handleColor = dataZoomModel.get('handleColor');
+                // Compatitable with previous version
+                if (handleColor != null) {
+                    path.style.fill = handleColor;
+                }
+
+                barGroup.add(handles[handleIndex] = path);
+
+                var textStyleModel = dataZoomModel.textStyleModel;
 
                 this.group.add(
                     handleLabels[handleIndex] = new graphic.Text({
@@ -421,11 +460,12 @@ define(function (require) {
                     invisible: true,
                     style: {
                         x: 0, y: 0, text: '',
-                        textBaseline: 'middle',
+                        textVerticalAlign: 'middle',
                         textAlign: 'center',
                         fill: textStyleModel.getTextColor(),
                         textFont: textStyleModel.getFont()
-                    }
+                    },
+                    z2: 10
                 }));
 
             }, this);
@@ -436,8 +476,12 @@ define(function (require) {
          */
         _resetInterval: function () {
             var range = this._range = this.dataZoomModel.getPercentRange();
+            var viewExtent = this._getViewExtent();
 
-            this._handleEnds = linearMap(range, [0, 100], this._getViewExtent(), true);
+            this._handleEnds = [
+                linearMap(range[0], [0, 100], viewExtent, true),
+                linearMap(range[1], [0, 100], viewExtent, true)
+            ];
         },
 
         /**
@@ -459,7 +503,10 @@ define(function (require) {
                 handleIndex
             );
 
-            this._range = asc(linearMap(handleEnds, viewExtend, [0, 100], true));
+            this._range = asc([
+                linearMap(handleEnds[0], viewExtend, [0, 100], true),
+                linearMap(handleEnds[1], viewExtend, [0, 100], true)
+            ]);
         },
 
         /**
@@ -470,20 +517,15 @@ define(function (require) {
             var handleEnds = this._handleEnds;
             var handleInterval = asc(handleEnds.slice());
             var size = this._size;
-            var halfHandleSize = this._halfHandleSize;
 
             each([0, 1], function (handleIndex) {
-
                 // Handles
                 var handle = displaybles.handles[handleIndex];
-                handle.setShape({
-                    x: handleEnds[handleIndex] - halfHandleSize,
-                    y: -1,
-                    width: halfHandleSize * 2,
-                    height: size[1] + 2,
-                    r: 1
+                var handleHeight = this._handleHeight;
+                handle.attr({
+                    scale: [handleHeight, handleHeight],
+                    position: [handleEnds[handleIndex], size[1] / 2 - handleHeight / 2]
                 });
-
             }, this);
 
             // Filler
@@ -491,7 +533,7 @@ define(function (require) {
                 x: handleInterval[0],
                 y: 0,
                 width: handleInterval[1] - handleInterval[0],
-                height: this._size[1]
+                height: size[1]
             });
 
             this._updateDataInfo();
@@ -538,13 +580,14 @@ define(function (require) {
             function setLabel(handleIndex) {
                 // Label
                 // Text should not transform by barGroup.
+                // Ignore handlers transform
                 var barTransform = graphic.getTransform(
-                    displaybles.handles[handleIndex], this.group
+                    displaybles.handles[handleIndex].parent, this.group
                 );
                 var direction = graphic.transformDirection(
                     handleIndex === 0 ? 'right' : 'left', barTransform
                 );
-                var offset = this._halfHandleSize + LABEL_GAP;
+                var offset = this._handleWidth / 2 + LABEL_GAP;
                 var textPoint = graphic.applyTransform(
                     [
                         orderedHandleEnds[handleIndex] + (handleIndex === 0 ? -offset : offset),
@@ -555,7 +598,7 @@ define(function (require) {
                 handleLabels[handleIndex].setStyle({
                     x: textPoint[0],
                     y: textPoint[1],
-                    textBaseline: orient === HORIZONTAL ? 'middle' : direction,
+                    textVerticalAlign: orient === HORIZONTAL ? 'middle' : direction,
                     textAlign: orient === HORIZONTAL ? direction : 'center',
                     text: labelTexts[handleIndex]
                 });
@@ -685,5 +728,7 @@ define(function (require) {
         // 这个逻辑和getOtherAxis里一致，但是写在这里是否不好
         return thisDim === 'x' ? 'y' : 'x';
     }
+
+    return SliderZoomView;
 
 });

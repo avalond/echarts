@@ -28,10 +28,12 @@
                 'echarts/component/legend',
                 'echarts/component/geo',
                 'echarts/component/tooltip',
-                'echarts/component/visualMap'
+                'echarts/component/visualMap',
+
+                'theme/vintage'
             ], function (echarts, gexf) {
 
-                var chart = echarts.init(document.getElementById('main'), null, {
+                var chart = echarts.init(document.getElementById('main'), 'vintage', {
                     renderer: 'canvas'
                 });
 
@@ -44,12 +46,22 @@
                         };
                     }
                     graph.nodes.forEach(function (node) {
-                        node.itemStyle = null;
+                        delete node.itemStyle;
                         node.value = node.symbolSize;
-                        node.label.normal.show = node.symbolSize > 30;
+                        node.label = {
+                            normal: {
+                                show: node.symbolSize > 30
+                            },
+                            emphasis: {
+                                show: true
+                            }
+                        };
                         node.category = node.attributes['modularity_class'];
                     });
-                    chart.setOption({
+                    graph.links.forEach(function (link) {
+                        delete link.lineStyle;
+                    });
+                    var option = {
                         tooltip: {},
                         legend: [{
                             // selectedMode: 'single',
@@ -57,12 +69,6 @@
                                 return a.name;
                             })
                         }],
-                        visualMap: {
-                            max: 100,
-                            inRange: {
-                                colorSaturation: [1, 0.3]
-                            }
-                        },
                         animationDurationUpdate: 1500,
                         animationEasingUpdate: 'quinticInOut',
                         series : [
@@ -74,23 +80,46 @@
                                 links: graph.links,
                                 categories: categories,
                                 roam: true,
+                                draggable: true,
+                                itemStyle: {
+                                    normal: {
+                                        borderColor: '#fff',
+                                        borderWidth: 2,
+                                        shadowBlur: 10,
+                                        shadowColor: 'rgba(0, 0, 0, 0.3)'
+                                    }
+                                },
+                                focusNodeAdjacency: true,
+                                // edgeSymbol: ['none', 'arrow'],
+                                // scaleLimit: {
+                                //     min: 1.5,
+                                //     max: 2
+                                // },
                                 label: {
                                     normal: {
-                                        position: 'right'
+                                        position: 'right',
+                                        formatter: '{b}'
                                     }
                                 },
                                 lineStyle: {
                                     normal: {
+                                        color: 'source',
                                         curveness: 0.3
                                     }
                                 }
                             }
                         ]
-                    });
+                    };
+
+                    chart.setOption(option);
 
                     var config = {
                         layout: 'none'
                     };
+
+                    chart.on('click', function (params) {
+                        console.log(params, params.data);
+                    });
 
                     var gui = new dat.GUI();
                     gui.add(config, 'layout', ['none', 'circular'])

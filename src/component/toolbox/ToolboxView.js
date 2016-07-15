@@ -12,7 +12,7 @@ define(function (require) {
 
         type: 'toolbox',
 
-        render: function (toolboxModel, ecModel, api) {
+        render: function (toolboxModel, ecModel, api, payload) {
             var group = this.group;
             group.removeAll();
 
@@ -46,19 +46,31 @@ define(function (require) {
                 var feature;
 
                 if (featureName && !oldName) { // Create
-                    var Feature = featureManager.get(featureName);
-                    if (!Feature) {
-                        return;
+                    if (isUserFeatureName(featureName)) {
+                        feature = {
+                            model: featureModel,
+                            onclick: featureModel.option.onclick,
+                            featureName: featureName
+                        };
                     }
-                    features[featureName] = feature = new Feature(featureModel);
+                    else {
+                        var Feature = featureManager.get(featureName);
+                        if (!Feature) {
+                            return;
+                        }
+                        feature = new Feature(featureModel, ecModel, api);
+                    }
+                    features[featureName] = feature;
                 }
                 else {
                     feature = features[oldName];
-                    // If not exsits feature
+                    // If feature does not exsit.
                     if (!feature) {
                         return;
                     }
                     feature.model = featureModel;
+                    feature.ecModel = ecModel;
+                    feature.api = api;
                 }
 
                 if (!featureName && oldName) {
@@ -66,7 +78,7 @@ define(function (require) {
                     return;
                 }
 
-                if (!featureModel.get('show')) {
+                if (!featureModel.get('show') || feature.unusable) {
                     feature.remove && feature.remove(ecModel, api);
                     return;
                 }
@@ -83,7 +95,7 @@ define(function (require) {
                 };
 
                 if (feature.render) {
-                    feature.render(featureModel, ecModel, api);
+                    feature.render(featureModel, ecModel, api, payload);
                 }
             }
 
@@ -111,23 +123,32 @@ define(function (require) {
                     icons[featureName] = icon;
                     titles[featureName] = title;
                 }
-
                 var iconPaths = featureModel.iconPaths = {};
                 zrUtil.each(icons, function (icon, iconName) {
                     var normalStyle = iconStyleModel.getModel('normal').getItemStyle();
                     var hoverStyle = iconStyleModel.getModel('emphasis').getItemStyle();
-                    var path = graphic.makePath(
-                        icon, {
-                            style: normalStyle,
-                            hoverStyle: hoverStyle,
-                            rectHover: true
-                        }, {
-                            x: -itemSize / 2,
-                            y: -itemSize / 2,
-                            width: itemSize,
-                            height: itemSize
-                        }, 'center'
-                    );
+
+                    var style = {
+                        x: -itemSize / 2,
+                        y: -itemSize / 2,
+                        width: itemSize,
+                        height: itemSize
+                    };
+                    var path = icon.indexOf('image://') === 0
+                        ? (
+                            style.image = icon.slice(8),
+                            new graphic.Image({style: style})
+                        )
+                        : graphic.makePath(
+                            icon.replace('path://', ''),
+                            {
+                                style: normalStyle,
+                                hoverStyle: hoverStyle,
+                                rectHover: true
+                            },
+                            style,
+                            'center'
+                        );
 
                     graphic.setHoverStyle(path);
 
@@ -193,6 +214,18 @@ define(function (require) {
             });
         },
 
+        updateView: function (toolboxModel, ecModel, api, payload) {
+            zrUtil.each(this._features, function (feature) {
+                feature.updateView && feature.updateView(feature.model, ecModel, api, payload);
+            });
+        },
+
+        updateLayout: function (toolboxModel, ecModel, api, payload) {
+            zrUtil.each(this._features, function (feature) {
+                feature.updateLayout && feature.updateLayout(feature.model, ecModel, api, payload);
+            });
+        },
+
         remove: function (ecModel, api) {
             zrUtil.each(this._features, function (feature) {
                 feature.remove && feature.remove(ecModel, api);
@@ -206,4 +239,9 @@ define(function (require) {
             });
         }
     });
+
+    function isUserFeatureName(featureName) {
+        return featureName.indexOf('my') === 0;
+    }
+
 });

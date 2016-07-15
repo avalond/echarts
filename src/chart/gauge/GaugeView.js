@@ -69,7 +69,9 @@ define(function (require) {
             var axisLineWidth = lineStyleModel.get('width');
 
             for (var i = 0; i < colorList.length; i++) {
-                var endAngle = startAngle + angleRangeSpan * colorList[i][0];
+                // Clamp
+                var percent = Math.min(Math.max(colorList[i][0], 0), 1);
+                var endAngle = startAngle + angleRangeSpan * percent;
                 var sector = new graphic.Sector({
                     shape: {
                         startAngle: prevEndAngle,
@@ -157,8 +159,12 @@ define(function (require) {
             var splitNumber = seriesModel.get('splitNumber');
             var subSplitNumber = tickModel.get('splitNumber');
 
-            var splitLineLen = splitLineModel.get('length');
-            var tickLen = tickModel.get('length');
+            var splitLineLen = parsePercent(
+                splitLineModel.get('length'), r
+            );
+            var tickLen = parsePercent(
+                tickModel.get('length'), r
+            );
 
             var angle = startAngle;
             var step = (endAngle - startAngle) / splitNumber;
@@ -198,15 +204,16 @@ define(function (require) {
                         numberUtil.round(i / splitNumber * (maxVal - minVal) + minVal),
                         labelModel.get('formatter')
                     );
+                    var distance = labelModel.get('distance');
 
                     var text = new graphic.Text({
                         style: {
                             text: label,
-                            x: unitX * (r - splitLineLen - 5) + cx,
-                            y: unitY * (r - splitLineLen - 5) + cy,
+                            x: unitX * (r - splitLineLen - distance) + cx,
+                            y: unitY * (r - splitLineLen - distance) + cy,
                             fill: textStyleModel.getTextColor(),
                             textFont: textStyleModel.getFont(),
-                            textBaseline: unitY < -0.4 ? 'top' : (unitY > 0.4 ? 'bottom' : 'middle'),
+                            textVerticalAlign: unitY < -0.4 ? 'top' : (unitY > 0.4 ? 'bottom' : 'middle'),
                             textAlign: unitX < -0.4 ? 'left' : (unitX > 0.4 ? 'right' : 'center')
                         },
                         silent: true
@@ -257,7 +264,6 @@ define(function (require) {
             seriesModel, ecModel, api, getColor, posInfo,
             startAngle, endAngle, clockwise
         ) {
-            var linearMap = numberUtil.linearMap;
             var valueExtent = [+seriesModel.get('min'), +seriesModel.get('max')];
             var angleExtent = [startAngle, endAngle];
 
@@ -280,7 +286,7 @@ define(function (require) {
 
                     graphic.updateProps(pointer, {
                         shape: {
-                            angle: linearMap(data.get('value', idx), valueExtent, angleExtent)
+                            angle: numberUtil.linearMap(data.get('value', idx), valueExtent, angleExtent, true)
                         }
                     }, seriesModel);
 
@@ -292,7 +298,7 @@ define(function (require) {
 
                     graphic.updateProps(pointer, {
                         shape: {
-                            angle: linearMap(data.get('value', newIdx), valueExtent, angleExtent)
+                            angle: numberUtil.linearMap(data.get('value', newIdx), valueExtent, angleExtent, true)
                         }
                     }, seriesModel);
 
@@ -309,15 +315,16 @@ define(function (require) {
                 var itemModel = data.getItemModel(idx);
                 var pointerModel = itemModel.getModel('pointer');
 
-                pointer.attr({
-                    shape: {
-                        x: posInfo.cx,
-                        y: posInfo.cy,
-                        width: pointerModel.get('width'),
-                        r: parsePercent(pointerModel.get('length'), posInfo.r)
-                    },
-                    style: itemModel.getModel('itemStyle.normal').getItemStyle()
+                pointer.setShape({
+                    x: posInfo.cx,
+                    y: posInfo.cy,
+                    width: parsePercent(
+                        pointerModel.get('width'), posInfo.r
+                    ),
+                    r: parsePercent(pointerModel.get('length'), posInfo.r)
                 });
+
+                pointer.useStyle(itemModel.getModel('itemStyle.normal').getItemStyle());
 
                 if (pointer.style.fill === 'auto') {
                     pointer.setStyle('fill', getColor(
@@ -351,7 +358,7 @@ define(function (require) {
                         fill: textStyleModel.getTextColor(),
                         textFont: textStyleModel.getFont(),
                         textAlign: 'center',
-                        textBaseline: 'middle'
+                        textVerticalAlign: 'middle'
                     }
                 });
                 this.group.add(text);
@@ -390,7 +397,9 @@ define(function (require) {
                     }
                 });
                 if (rect.style.textFill === 'auto') {
-                    rect.setStyle('textFill', getColor((value - minVal) / (maxVal - minVal)));
+                    rect.setStyle('textFill', getColor(
+                        numberUtil.linearMap(value, [minVal, maxVal], [0, 1], true)
+                    ));
                 }
                 rect.setStyle(detailModel.getItemStyle(['color']));
                 this.group.add(rect);

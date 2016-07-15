@@ -7,7 +7,7 @@ define(function(require) {
     var modelUtil = require('../../util/model');
     var completeDimensions = require('../../data/helper/completeDimensions');
 
-    var dataSelectableMixin = require('../helper/dataSelectableMixin');
+    var dataSelectableMixin = require('../../component/helper/selectableMixin');
 
     var PieSeries = require('../../echarts').extendSeriesModel({
 
@@ -15,7 +15,7 @@ define(function(require) {
 
         // Overwrite
         init: function (option) {
-            this.$superApply('init', arguments);
+            PieSeries.superApply(this, 'init', arguments);
 
             // Enable legend selection for each data item
             // Use a function instead of direct access because data reference may changed
@@ -23,15 +23,15 @@ define(function(require) {
                 return this._dataBeforeProcessed;
             };
 
-            this.updateSelectedMap();
+            this.updateSelectedMap(option.data);
 
             this._defaultLabelLine(option);
         },
 
         // Overwrite
         mergeOption: function (newOption) {
-            this.$superCall('mergeOption', newOption);
-            this.updateSelectedMap();
+            PieSeries.superCall(this, 'mergeOption', newOption);
+            this.updateSelectedMap(this.option.data);
         },
 
         getInitialData: function (option, ecModel) {
@@ -44,9 +44,12 @@ define(function(require) {
         // Overwrite
         getDataParams: function (dataIndex) {
             var data = this._data;
-            var params = this.$superCall('getDataParams', dataIndex);
+            var params = PieSeries.superCall(this, 'getDataParams', dataIndex);
+            var sum = data.getSum('value');
             // FIXME toFixed?
-            params.percent = +(data.get('value', dataIndex) / data.getSum('value') * 100).toFixed(2);
+            //
+            // Percent is 0 if sum is 0
+            params.percent = !sum ? 0 : +(data.get('value', dataIndex) / sum * 100).toFixed(2);
 
             params.$vars.push('percent');
             return params;
@@ -107,9 +110,9 @@ define(function(require) {
                 normal: {
                     show: true,
                     // 引导线两段中的第一段长度
-                    length: 20,
+                    length: 15,
                     // 引导线两段中的第二段长度
-                    length2: 5,
+                    length2: 15,
                     smooth: false,
                     lineStyle: {
                         // color: 各异,
@@ -120,15 +123,9 @@ define(function(require) {
             },
             itemStyle: {
                 normal: {
-                    // color: 各异,
-                    borderColor: 'rgba(0,0,0,0)',
                     borderWidth: 1
                 },
-                emphasis: {
-                    // color: 各异,
-                    borderColor: 'rgba(0,0,0,0)',
-                    borderWidth: 1
-                }
+                emphasis: {}
             },
 
             animationEasing: 'cubicOut',

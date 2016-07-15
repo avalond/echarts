@@ -27,16 +27,18 @@ define(function (require) {
         this.name = name;
 
         /**
-         * @param {Array.<string>}
-         * @readOnly
+         * @type {Object}
          */
-        this.dimensions = ['x', 'y'];
+        this.zoomLimit;
 
         Transformable.call(this);
 
         this._roamTransform = new TransformDummy();
 
         this._viewTransform = new TransformDummy();
+
+        this._center;
+        this._zoom;
     }
 
     View.prototype = {
@@ -44,6 +46,12 @@ define(function (require) {
         constructor: View,
 
         type: 'view',
+
+        /**
+         * @param {Array.<string>}
+         * @readOnly
+         */
+        dimensions: ['x', 'y'],
 
         /**
          * Set bounding rect
@@ -74,6 +82,8 @@ define(function (require) {
          * @param {number} height
          */
         setViewRect: function (x, y, width, height) {
+            width = width;
+            height = height;
             this.transformTo(x, y, width, height);
             this._viewRect = new BoundingRect(x, y, width, height);
         },
@@ -99,30 +109,84 @@ define(function (require) {
         },
 
         /**
-         * @param {number} x
-         * @param {number} y
+         * Set center of view
+         * @param {Array.<number>} [centerCoord]
          */
-        setPan: function (x, y) {
+        setCenter: function (centerCoord) {
+            if (!centerCoord) {
+                return;
+            }
+            this._center = centerCoord;
 
-            this._roamTransform.position = [x, y];
-
-            this._updateTransform();
+            this._updateCenterAndZoom();
         },
 
         /**
          * @param {number} zoom
          */
         setZoom: function (zoom) {
-            this._roamTransform.scale = [zoom, zoom];
+            zoom = zoom || 1;
 
-            this._updateTransform();
+            var zoomLimit = this.zoomLimit;
+            if (zoomLimit) {
+                if (zoomLimit.max != null) {
+                    zoom = Math.min(zoomLimit.max, zoom);
+                }
+                if (zoomLimit.min != null) {
+                    zoom = Math.max(zoomLimit.min, zoom);
+                }
+            }
+            this._zoom = zoom;
+
+            this._updateCenterAndZoom();
+        },
+
+        /**
+         * Get default center without roam
+         */
+        getDefaultCenter: function () {
+            // Rect before any transform
+            var rawRect = this.getBoundingRect();
+            var cx = rawRect.x + rawRect.width / 2;
+            var cy = rawRect.y + rawRect.height / 2;
+
+            return [cx, cy];
+        },
+
+        getCenter: function () {
+            return this._center || this.getDefaultCenter();
+        },
+
+        getZoom: function () {
+            return this._zoom || 1;
         },
 
         /**
          * @return {Array.<number}
          */
         getRoamTransform: function () {
-            return this._roamTransform.transform;
+            return this._roamTransform;
+        },
+
+        _updateCenterAndZoom: function () {
+            // Must update after view transform updated
+            var viewTransformMatrix = this._viewTransform.getLocalTransform();
+            var roamTransform = this._roamTransform;
+            var defaultCenter = this.getDefaultCenter();
+            var center = this.getCenter();
+            var zoom = this.getZoom();
+
+            center = vector.applyTransform([], center, viewTransformMatrix);
+            defaultCenter = vector.applyTransform([], defaultCenter, viewTransformMatrix);
+
+            roamTransform.origin = center;
+            roamTransform.position = [
+                defaultCenter[0] - center[0],
+                defaultCenter[1] - center[1]
+            ];
+            roamTransform.scale = [zoom, zoom];
+
+            this._updateTransform();
         },
 
         /**
@@ -132,7 +196,6 @@ define(function (require) {
         _updateTransform: function () {
             var roamTransform = this._roamTransform;
             var viewTransform = this._viewTransform;
-            // var scale = this.scale;
 
             viewTransform.parent = roamTransform;
             roamTransform.updateTransform();
@@ -141,6 +204,13 @@ define(function (require) {
             viewTransform.transform
                 && matrix.copy(this.transform || (this.transform = []), viewTransform.transform);
 
+            if (this.transform) {
+                this.invTransform = this.invTransform || [];
+                matrix.invert(this.invTransform, this.transform);
+            }
+            else {
+                this.invTransform = null;
+            }
             this.decomposeTransform();
         },
 
@@ -149,6 +219,16 @@ define(function (require) {
          */
         getViewRect: function () {
             return this._viewRect;
+        },
+
+        /**
+         * Get view rect after roam transform
+         * @return {module:zrender/core/BoundingRect}
+         */
+        getViewRectAfterRoam: function () {
+            var rect = this.getBoundingRect().clone();
+            rect.applyTransform(this.transform);
+            return rect;
         },
 
         /**

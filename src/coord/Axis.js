@@ -11,6 +11,8 @@ define(function (require) {
         extent[0] += margin;
         extent[1] -= margin;
     }
+
+    var normalizedExtent = [0, 1];
     /**
      * @name module:echarts/coord/CartesianAxis
      * @constructor
@@ -111,14 +113,16 @@ define(function (require) {
          * @return {number}
          */
         dataToCoord: function (data, clamp) {
-            data = this.scale.normalize(data);
-            var extent = this.getExtent();
+            var extent = this._extent;
             var scale = this.scale;
+            data = scale.normalize(data);
+
             if (this.onBand && scale.type === 'ordinal') {
+                extent = extent.slice();
                 fixExtentWithBands(extent, scale.count());
             }
 
-            return linearMap(data, [0, 1], extent, clamp);
+            return linearMap(data, normalizedExtent, extent, clamp);
         },
 
         /**
@@ -128,21 +132,23 @@ define(function (require) {
          * @return {number}
          */
         coordToData: function (coord, clamp) {
-            var extent = this.getExtent();
+            var extent = this._extent;
+            var scale = this.scale;
 
-            if (this.onBand) {
-                fixExtentWithBands(extent, this.scale.count());
+            if (this.onBand && scale.type === 'ordinal') {
+                extent = extent.slice();
+                fixExtentWithBands(extent, scale.count());
             }
 
-            var t = linearMap(coord, extent, [0, 1], clamp);
+            var t = linearMap(coord, extent, normalizedExtent, clamp);
 
             return this.scale.scale(t);
         },
         /**
          * @return {Array.<number>}
          */
-        getTicksCoords: function () {
-            if (this.onBand) {
+        getTicksCoords: function (alignWithLabel) {
+            if (this.onBand && !alignWithLabel) {
                 var bands = this.getBands();
                 var coords = [];
                 for (var i = 0; i < bands.length; i++) {
@@ -163,19 +169,7 @@ define(function (require) {
          * @return {Array.<number>}
          */
         getLabelsCoords: function () {
-            if (this.onBand) {
-                var bands = this.getBands();
-                var coords = [];
-                var band;
-                for (var i = 0; i < bands.length; i++) {
-                    band = bands[i];
-                    coords.push((band[0] + band[1]) / 2);
-                }
-                return coords;
-            }
-            else {
-                return zrUtil.map(this.scale.getTicks(), this.dataToCoord, this);
-            }
+            return zrUtil.map(this.scale.getTicks(), this.dataToCoord, this);
         },
 
         /**
@@ -213,6 +207,8 @@ define(function (require) {
             var dataExtent = this.scale.getExtent();
 
             var len = dataExtent[1] - dataExtent[0] + (this.onBand ? 1 : 0);
+            // Fix #2728, avoid NaN when only one data.
+            len === 0 && (len = 1);
 
             var size = Math.abs(axisExtent[1] - axisExtent[0]);
 

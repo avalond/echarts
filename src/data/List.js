@@ -27,16 +27,18 @@ define(function (require) {
     var modelUtil = require('../util/model');
     var isObject = zrUtil.isObject;
 
-    var IMMUTABLE_PROPERTIES = [
-        'stackedOn', '_nameList', '_idList', '_rawData'
+    var TRANSFERABLE_PROPERTIES = [
+        'stackedOn', 'hasItemOption', '_nameList', '_idList', '_rawData'
     ];
 
-    var transferImmuProperties = function (a, b, wrappedMethod) {
-        zrUtil.each(IMMUTABLE_PROPERTIES.concat(wrappedMethod || []), function (propName) {
+    var transferProperties = function (a, b) {
+        zrUtil.each(TRANSFERABLE_PROPERTIES.concat(b.__wrappedMethods || []), function (propName) {
             if (b.hasOwnProperty(propName)) {
                 a[propName] = b[propName];
             }
         });
+
+        a.__wrappedMethods = b.__wrappedMethods;
     };
 
     /**
@@ -92,6 +94,11 @@ define(function (require) {
         this.hostModel = hostModel;
 
         /**
+         * @type {module:echarts/model/Model}
+         */
+        this.dataType;
+
+        /**
          * Indices stores the indices of data subset after filtered.
          * This data subset will be used in chart.
          * @type {Array.<number>}
@@ -134,6 +141,13 @@ define(function (require) {
         this._visual = {};
 
         /**
+         * Globel layout properties.
+         * @type {Object}
+         * @private
+         */
+        this._layout = {};
+
+        /**
          * Item visual properties after visual coding
          * @type {Array.<Object>}
          * @private
@@ -159,17 +173,29 @@ define(function (require) {
          * @private
          */
         this._rawData;
+
+        /**
+         * @type {Object}
+         * @private
+         */
+        this._extent;
     };
 
     var listProto = List.prototype;
 
     listProto.type = 'list';
+    /**
+     * If each data item has it's own option
+     * @type {boolean}
+     */
+    listProto.hasItemOption = true;
 
     /**
      * Get dimension name
      * @param {string|number} dim
      *        Dimension can be concrete names like x, y, z, lng, lat, angle, radius
      *        Or a ordinal number. For example getDimensionInfo(0) will return 'x' or 'lng' or 'radius'
+     * @return {string} Concrete dim name.
      */
     listProto.getDimension = function (dim) {
         if (!isNaN(dim)) {
@@ -184,7 +210,7 @@ define(function (require) {
      *        Or a ordinal number. For example getDimensionInfo(0) will return 'x' or 'lng' or 'radius'
      */
     listProto.getDimensionInfo = function (dim) {
-        return this._dimensionInfos[this.getDimension(dim)];
+        return zrUtil.clone(this._dimensionInfos[this.getDimension(dim)]);
     };
 
     /**
@@ -195,6 +221,12 @@ define(function (require) {
      */
     listProto.initData = function (data, nameList, dimValueGetter) {
         data = data || [];
+
+        if (__DEV__) {
+            if (!zrUtil.isArray(data)) {
+                throw new Error('Invalid data.');
+            }
+        }
 
         this._rawData = data;
 
@@ -218,11 +250,19 @@ define(function (require) {
             storage[dimensions[i]] = new DataCtor(size);
         }
 
+        var self = this;
+        if (!dimValueGetter) {
+            self.hasItemOption = false;
+        }
         // Default dim value getter
         dimValueGetter = dimValueGetter || function (dataItem, dimName, dataIndex, dimIndex) {
             var value = modelUtil.getDataItemValue(dataItem);
+            // If any dataItem is like { value: 10 }
+            if (modelUtil.isDataItemOption(dataItem)) {
+                self.hasItemOption = true;
+            }
             return modelUtil.converDataValue(
-                zrUtil.isArray(value)
+                (value instanceof Array)
                     ? value[dimIndex]
                     // If value is a single number or something else not array.
                     : value,
@@ -252,13 +292,15 @@ define(function (require) {
 
         // Use the name in option and create id
         for (var i = 0; i < data.length; i++) {
-            var id = '';
             if (!nameList[i]) {
-                nameList[i] = data[i].name;
-                // Try using the id in option
-                id = data[i].id;
+                if (data[i] && data[i].name != null) {
+                    nameList[i] = data[i].name;
+                }
             }
             var name = nameList[i] || '';
+            // Try using the id in option
+            var id = data[i] && data[i].id;
+
             if (!id && name) {
                 // Use name as id and add counter to avoid same name
                 nameRepeatCount[name] = nameRepeatCount[name] || 0;
@@ -283,7 +325,7 @@ define(function (require) {
     };
 
     /**
-     * Get value
+     * Get value. Return NaN if idx is out of range.
      * @param {string} dim Dim must be concrete name.
      * @param {number} idx
      * @param {boolean} stack
@@ -293,21 +335,28 @@ define(function (require) {
         var storage = this._storage;
         var dataIndex = this.indices[idx];
 
+        // If value not exists
+        if (dataIndex == null) {
+            return NaN;
+        }
+
         var value = storage[dim] && storage[dim][dataIndex];
-        var dimensionInfo = this._dimensionInfos[dim];
         // FIXME ordinal data type is not stackable
-        if (stack && dimensionInfo && dimensionInfo.stackable) {
-            var stackedOn = this.stackedOn;
-            while (stackedOn) {
-                // Get no stacked data of stacked on
-                var stackedValue = stackedOn.get(dim, idx);
-                // Considering positive stack, negative stack and empty data
-                if ((value >= 0 && stackedValue > 0)  // Positive stack
-                    || (value <= 0 && stackedValue < 0) // Negative stack
-                ) {
-                    value += stackedValue;
+        if (stack) {
+            var dimensionInfo = this._dimensionInfos[dim];
+            if (dimensionInfo && dimensionInfo.stackable) {
+                var stackedOn = this.stackedOn;
+                while (stackedOn) {
+                    // Get no stacked data of stacked on
+                    var stackedValue = stackedOn.get(dim, idx);
+                    // Considering positive stack, negative stack and empty data
+                    if ((value >= 0 && stackedValue > 0)  // Positive stack
+                        || (value <= 0 && stackedValue < 0) // Negative stack
+                    ) {
+                        value += stackedValue;
+                    }
+                    stackedOn = stackedOn.stackedOn;
                 }
-                stackedOn = stackedOn.stackedOn;
             }
         }
         return value;
@@ -363,6 +412,7 @@ define(function (require) {
      * @param {boolean} stack
      */
     listProto.getDataExtent = function (dim, stack) {
+        dim = this.getDimension(dim);
         var dimData = this._storage[dim];
         var dimInfo = this.getDimensionInfo(dim);
         stack = (dimInfo && dimInfo.stackable) && stack;
@@ -381,12 +431,11 @@ define(function (require) {
                 // FIXME
                 // if (isOrdinal && typeof value === 'string') {
                 //     value = zrUtil.indexOf(dimData, value);
-                //     console.log(value);
                 // }
                 value < min && (min = value);
                 value > max && (max = value);
             }
-            return (this._extent[dim + stack] = [min, max]);
+            return (this._extent[dim + !!stack] = [min, max]);
         }
         else {
             return [Infinity, -Infinity];
@@ -456,34 +505,68 @@ define(function (require) {
     };
 
     /**
-     * Retreive the index of nearest value
-     * @param {string|Array.<string>} dim
-     * @param {number} value
-     * @param {boolean} stack If given value is after stacked
+     * Retreive the index with given raw data index
+     * @param {number} idx
+     * @param {number} name
      * @return {number}
      */
-    listProto.indexOfNearest = function (dim, value, stack) {
-        if (!zrUtil.isArray(dim)) {
-            dim = dim ? [dim] : [];
+    listProto.indexOfRawIndex = function (rawIndex) {
+        // Indices are ascending
+        var indices = this.indices;
+        var left = 0;
+        var right = indices.length - 1;
+        while (left <= right) {
+            var mid = (left + right) / 2 | 0;
+            if (indices[mid] < rawIndex) {
+                left = mid + 1;
+            }
+            else if (indices[mid] > rawIndex) {
+                right = mid - 1;
+            }
+            else {
+                return mid;
+            }
         }
+        return -1;
+    };
+
+    /**
+     * Retreive the index of nearest value
+     * @param {string} dim
+     * @param {number} value
+     * @param {boolean} stack If given value is after stacked
+     * @param {number} [maxDistance=Infinity]
+     * @return {number}
+     */
+    listProto.indexOfNearest = function (dim, value, stack, maxDistance) {
         var storage = this._storage;
         var dimData = storage[dim];
 
+        if (maxDistance == null) {
+            maxDistance = Infinity;
+        }
+
+        var nearestIdx = -1;
         if (dimData) {
             var minDist = Number.MAX_VALUE;
-            var nearestIdx = -1;
-            for (var j = 0, lenj = dim.length; j < lenj; j++) {
-                for (var i = 0, len = this.count(); i < len; i++) {
-                    var dist = Math.abs(this.get(dim[j], i, stack) - value);
-                    if (dist <= minDist) {
-                        minDist = dist;
-                        nearestIdx = i;
-                    }
+            for (var i = 0, len = this.count(); i < len; i++) {
+                var diff = value - this.get(dim, i, stack);
+                var dist = Math.abs(diff);
+                if (
+                    diff <= maxDistance
+                    && (dist < minDist
+                        // For the case of two data are same on xAxis, which has sequence data.
+                        // Show the nearest index
+                        // https://github.com/ecomfe/echarts/issues/2869
+                        || (dist === minDist && diff > 0)
+                    )
+                ) {
+                    minDist = dist;
+                    nearestIdx = i;
                 }
             }
-            return nearestIdx;
         }
-        return -1;
+        return nearestIdx;
     };
 
     /**
@@ -494,6 +577,15 @@ define(function (require) {
     listProto.getRawIndex = function (idx) {
         var rawIdx = this.indices[idx];
         return rawIdx == null ? -1 : rawIdx;
+    };
+
+    /**
+     * Get raw data item
+     * @param {number} idx
+     * @return {number}
+     */
+    listProto.getRawDataItem = function (idx) {
+        return this._rawData[this.getRawIndex(idx)];
     };
 
     /**
@@ -534,39 +626,41 @@ define(function (require) {
      *  list.each(['x', 'y'], function (x, y, idx) {});
      *  list.each(function (idx) {})
      */
-    listProto.each = function (dimensions, cb, stack, context) {
-        if (typeof dimensions === 'function') {
+    listProto.each = function (dims, cb, stack, context) {
+        if (typeof dims === 'function') {
             context = stack;
             stack = cb;
-            cb = dimensions;
-            dimensions = [];
+            cb = dims;
+            dims = [];
         }
 
-        dimensions = zrUtil.map(
-            normalizeDimensions(dimensions), this.getDimension, this
-        );
+        dims = zrUtil.map(normalizeDimensions(dims), this.getDimension, this);
 
         var value = [];
-        var dimSize = dimensions.length;
+        var dimSize = dims.length;
         var indices = this.indices;
 
         context = context || this;
 
         for (var i = 0; i < indices.length; i++) {
-            if (dimSize === 0) {
-                cb.call(context, i);
-            }
             // Simple optimization
-            else if (dimSize === 1) {
-                cb.call(context, this.get(dimensions[0], i, stack), i);
-            }
-            else {
-                for (var k = 0; k < dimSize; k++) {
-                    value[k] = this.get(dimensions[k], i, stack);
-                }
-                // Index
-                value[k] = i;
-                cb.apply(context, value);
+            switch (dimSize) {
+                case 0:
+                    cb.call(context, i);
+                    break;
+                case 1:
+                    cb.call(context, this.get(dims[0], i, stack), i);
+                    break;
+                case 2:
+                    cb.call(context, this.get(dims[0], i, stack), this.get(dims[1], i, stack), i);
+                    break;
+                default:
+                    for (var k = 0; k < dimSize; k++) {
+                        value[k] = this.get(dims[k], i, stack);
+                    }
+                    // Index
+                    value[k] = i;
+                    cb.apply(context, value);
             }
         }
     };
@@ -648,6 +742,34 @@ define(function (require) {
         return result;
     };
 
+    function cloneListForMapAndSample(original, excludeDimensions) {
+        var allDimensions = original.dimensions;
+        var list = new List(
+            zrUtil.map(allDimensions, original.getDimensionInfo, original),
+            original.hostModel
+        );
+        // FIXME If needs stackedOn, value may already been stacked
+        transferProperties(list, original);
+
+        var storage = list._storage = {};
+        var originalStorage = original._storage;
+        // Init storage
+        for (var i = 0; i < allDimensions.length; i++) {
+            var dim = allDimensions[i];
+            var dimStore = originalStorage[dim];
+            if (zrUtil.indexOf(excludeDimensions, dim) >= 0) {
+                storage[dim] = new dimStore.constructor(
+                    originalStorage[dim].length
+                );
+            }
+            else {
+                // Direct reference for other dimensions
+                storage[dim] = originalStorage[dim];
+            }
+        }
+        return list;
+    }
+
     /**
      * Data mapping to a new List with given dimensions
      * @param {string|Array.<string>} dimensions
@@ -661,36 +783,12 @@ define(function (require) {
             normalizeDimensions(dimensions), this.getDimension, this
         );
 
-        var allDimensions = this.dimensions;
-        var list = new List(
-            zrUtil.map(allDimensions, this.getDimensionInfo, this),
-            this.hostModel
-        );
-
+        var list = cloneListForMapAndSample(this, dimensions);
         // Following properties are all immutable.
         // So we can reference to the same value
         var indices = list.indices = this.indices;
 
-        // FIXME If needs stackedOn, value may already been stacked
-        transferImmuProperties(list, this, this._wrappedMethods);
-
-        var storage = list._storage = {};
-        var thisStorage = this._storage;
-
-        // Init storage
-        for (var i = 0; i < allDimensions.length; i++) {
-            var dim = allDimensions[i];
-            var dimStore = thisStorage[dim];
-            if (zrUtil.indexOf(dimensions, dim) >= 0) {
-                storage[dim] = new dimStore.constructor(
-                    thisStorage[dim].length
-                );
-            }
-            else {
-                // Direct copy for other dimensions
-                storage[dim] = thisStorage[dim];
-            }
-        }
+        var storage = list._storage;
 
         var tmpRetValue = [];
         this.each(dimensions, function () {
@@ -711,42 +809,67 @@ define(function (require) {
                     }
                 }
             }
-        });
+        }, stack, context);
 
         return list;
     };
 
-    var temporaryModel = new Model(null);
-    // Since temporate model is shared by all data items. So we must make sure it can't be write.
-    // PENDING may cause any performance problem?
-    // if (Object.freeze) {
-    //     Object.freeze(temporaryModel);
-    // }
+    /**
+     * Large data down sampling on given dimension
+     * @param {string} dimension
+     * @param {number} rate
+     * @param {Function} sampleValue
+     * @param {Function} sampleIndex Sample index for name and id
+     */
+    listProto.downSample = function (dimension, rate, sampleValue, sampleIndex) {
+        var list = cloneListForMapAndSample(this, [dimension]);
+        var storage = this._storage;
+        var targetStorage = list._storage;
+
+        var originalIndices = this.indices;
+        var indices = list.indices = [];
+
+        var frameValues = [];
+        var frameIndices = [];
+        var frameSize = Math.floor(1 / rate);
+
+        var dimStore = targetStorage[dimension];
+        var len = this.count();
+        // Copy data from original data
+        for (var i = 0; i < storage[dimension].length; i++) {
+            targetStorage[dimension][i] = storage[dimension][i];
+        }
+        for (var i = 0; i < len; i += frameSize) {
+            // Last frame
+            if (frameSize > len - i) {
+                frameSize = len - i;
+                frameValues.length = frameSize;
+            }
+            for (var k = 0; k < frameSize; k++) {
+                var idx = originalIndices[i + k];
+                frameValues[k] = dimStore[idx];
+                frameIndices[k] = idx;
+            }
+            var value = sampleValue(frameValues);
+            var idx = frameIndices[sampleIndex(frameValues, value) || 0];
+            // Only write value on the filtered data
+            dimStore[idx] = value;
+            indices.push(idx);
+        }
+
+        return list;
+    };
+
     /**
      * Get model of one data item.
-     * It will create a temporary model if value on idx is not an option.
      *
      * @param {number} idx
-     * @param {boolean} [createNew=false]
      */
     // FIXME Model proxy ?
-    listProto.getItemModel = function (idx, createNew) {
-        var model;
+    listProto.getItemModel = function (idx) {
         var hostModel = this.hostModel;
         idx = this.indices[idx];
-        // Use a temporary model proxy
-        // FIXME Create a new one may cause memory leak
-        if (createNew) {
-            model = new Model(null, hostModel);
-        }
-        else {
-            model = temporaryModel;
-        }
-        // FIXME If return null when idx not exists
-        model.option = this._rawData[idx];
-        model.parentModel = hostModel;
-        model.ecModel = hostModel.ecModel;
-        return model;
+        return new Model(this._rawData[idx], hostModel, hostModel && hostModel.ecModel);
     };
 
     /**
@@ -799,12 +922,38 @@ define(function (require) {
     };
 
     /**
+     * Set layout property.
+     * @param {string} key
+     * @param {*} [val]
+     */
+    listProto.setLayout = function (key, val) {
+        if (isObject(key)) {
+            for (var name in key) {
+                if (key.hasOwnProperty(name)) {
+                    this.setLayout(name, key[name]);
+                }
+            }
+            return;
+        }
+        this._layout[key] = val;
+    };
+
+    /**
+     * Get layout property.
+     * @param  {string} key.
+     * @return {*}
+     */
+    listProto.getLayout = function (key) {
+        return this._layout[key];
+    };
+
+    /**
      * Get layout of single data item
      * @param {number} idx
      */
     listProto.getItemLayout = function (idx) {
         return this._itemLayouts[idx];
-    },
+    };
 
     /**
      * Set layout of single data item
@@ -816,7 +965,14 @@ define(function (require) {
         this._itemLayouts[idx] = merge
             ? zrUtil.extend(this._itemLayouts[idx] || {}, layout)
             : layout;
-    },
+    };
+
+    /**
+     * Clear all layout of single data item
+     */
+    listProto.clearItemLayouts = function () {
+        this._itemLayouts.length = 0;
+    };
 
     /**
      * Get visual property of single data item
@@ -832,7 +988,7 @@ define(function (require) {
             return this.getVisual(key);
         }
         return val;
-    },
+    };
 
     /**
      * Set visual property of single data item
@@ -862,9 +1018,18 @@ define(function (require) {
         itemVisual[key] = value;
     };
 
+    /**
+     * Clear itemVisuals and list visual.
+     */
+    listProto.clearAllVisual = function () {
+        this._visual = {};
+        this._itemVisuals = [];
+    };
+
     var setItemDataAndSeriesIndex = function (child) {
         child.seriesIndex = this.seriesIndex;
         child.dataIndex = this.dataIndex;
+        child.dataType = this.dataType;
     };
     /**
      * Set graphic element relative to data. It can be set as null
@@ -878,6 +1043,7 @@ define(function (require) {
             // Add data index and series index for indexing the data by element
             // Useful in tooltip
             el.dataIndex = idx;
+            el.dataType = this.dataType;
             el.seriesIndex = hostModel && hostModel.seriesIndex;
             if (el.type === 'group') {
                 el.traverse(setItemDataAndSeriesIndex, el);
@@ -918,9 +1084,15 @@ define(function (require) {
         // FIXME
         list._storage = this._storage;
 
-        transferImmuProperties(list, this, this._wrappedMethods);
+        transferProperties(list, this);
 
+
+        // Clone will not change the data extent and indices
         list.indices = this.indices.slice();
+
+        if (this._extent) {
+            list._extent = zrUtil.extend({}, this._extent);
+        }
 
         return list;
     };
@@ -935,13 +1107,19 @@ define(function (require) {
         if (typeof originalMethod !== 'function') {
             return;
         }
-        this._wrappedMethods = this._wrappedMethods || [];
-        this._wrappedMethods.push(methodName);
+        this.__wrappedMethods = this.__wrappedMethods || [];
+        this.__wrappedMethods.push(methodName);
         this[methodName] = function () {
             var res = originalMethod.apply(this, arguments);
-            return injectFunction.call(this, res);
+            return injectFunction.apply(this, [res].concat(zrUtil.slice(arguments)));
         };
     };
+
+    // Methods that create a new list based on this list should be listed here.
+    // Notice that those method should `RETURN` the new list.
+    listProto.TRANSFERABLE_METHODS = ['cloneShallow', 'downSample', 'map'];
+    // Methods that change indices of this list should be listed here.
+    listProto.CHANGABLE_METHODS = ['filterSelf'];
 
     return List;
 });

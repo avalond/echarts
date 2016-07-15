@@ -9,7 +9,7 @@ define(function (require) {
     var numberUtil = require('../../util/number');
 
     function normalizeSymbolSize(symbolSize) {
-        if (!zrUtil.isArray(symbolSize)) {
+        if (!(symbolSize instanceof Array)) {
             symbolSize = [+symbolSize, +symbolSize];
         }
         return symbolSize;
@@ -22,10 +22,10 @@ define(function (require) {
      * @param {number} idx
      * @extends {module:zrender/graphic/Group}
      */
-    function Symbol(data, idx) {
+    function Symbol(data, idx, seriesScope) {
         graphic.Group.call(this);
 
-        this.updateData(data, idx);
+        this.updateData(data, idx, seriesScope);
     }
 
     var symbolProto = Symbol.prototype;
@@ -46,10 +46,8 @@ define(function (require) {
         );
 
         symbolPath.attr({
-            style: {
-                strokeNoScale: true
-            },
             z2: 100,
+            culling: true,
             scale: [0, 0]
         });
         // Rewrite drift method
@@ -59,7 +57,7 @@ define(function (require) {
 
         graphic.initProps(symbolPath, {
             scale: size
-        }, seriesModel);
+        }, seriesModel, idx);
 
         this._symbolType = symbolType;
 
@@ -77,7 +75,6 @@ define(function (require) {
     /**
      * Get scale(aka, current symbol size).
      * Including the change caused by animation
-     * @param {Array.<number>} toLastFrame
      */
     symbolProto.getScale = function () {
         return this.childAt(0).scale;
@@ -112,12 +109,15 @@ define(function (require) {
         symbolPath.draggable = draggable;
         symbolPath.cursor = draggable ? 'move' : 'pointer';
     };
+
     /**
      * Update symbol properties
      * @param  {module:echarts/data/List} data
      * @param  {number} idx
      */
-    symbolProto.updateData = function (data, idx) {
+    symbolProto.updateData = function (data, idx, seriesScope) {
+        this.silent = false;
+
         var symbolType = data.getItemVisual(idx, 'symbol') || 'circle';
         var seriesModel = data.hostModel;
         var symbolSize = normalizeSymbolSize(data.getItemVisual(idx, 'symbolSize'));
@@ -128,9 +128,9 @@ define(function (require) {
             var symbolPath = this.childAt(0);
             graphic.updateProps(symbolPath, {
                 scale: symbolSize
-            }, seriesModel);
+            }, seriesModel, idx);
         }
-        this._updateCommon(data, idx, symbolSize);
+        this._updateCommon(data, idx, symbolSize, seriesScope);
 
         this._seriesModel = seriesModel;
     };
@@ -141,56 +141,99 @@ define(function (require) {
     var normalLabelAccessPath = ['label', 'normal'];
     var emphasisLabelAccessPath = ['label', 'emphasis'];
 
-    symbolProto._updateCommon = function (data, idx, symbolSize) {
+    symbolProto._updateCommon = function (data, idx, symbolSize, seriesScope) {
         var symbolPath = this.childAt(0);
         var seriesModel = data.hostModel;
-        var itemModel = data.getItemModel(idx);
-        var normalItemStyleModel = itemModel.getModel(normalStyleAccessPath);
         var color = data.getItemVisual(idx, 'color');
 
-        var hoverStyle = itemModel.getModel(emphasisStyleAccessPath).getItemStyle();
-
-        symbolPath.rotation = itemModel.getShallow('symbolRotate') * Math.PI / 180 || 0;
-
-        var symbolOffset = itemModel.getShallow('symbolOffset');
-        if (symbolOffset) {
-            var pos = symbolPath.position;
-            pos[0] = numberUtil.parsePercent(symbolOffset[0], symbolSize[0]);
-            pos[1] = numberUtil.parsePercent(symbolOffset[1], symbolSize[1]);
+        // Reset style
+        if (symbolPath.type !== 'image') {
+            symbolPath.useStyle({
+                strokeNoScale: true
+            });
         }
 
-        symbolPath.setColor(color);
+        seriesScope = seriesScope || null;
 
-        zrUtil.extend(
-            symbolPath.style,
+        var itemStyle = seriesScope && seriesScope.itemStyle;
+        var hoverItemStyle = seriesScope && seriesScope.hoverItemStyle;
+        var symbolRotate = seriesScope && seriesScope.symbolRotate;
+        var symbolOffset = seriesScope && seriesScope.symbolOffset;
+        var labelModel = seriesScope && seriesScope.labelModel;
+        var hoverLabelModel = seriesScope && seriesScope.hoverLabelModel;
+        var hoverAnimation = seriesScope && seriesScope.hoverAnimation;
+
+        if (!seriesScope || data.hasItemOption) {
+            var itemModel = data.getItemModel(idx);
+
             // Color must be excluded.
             // Because symbol provide setColor individually to set fill and stroke
-            normalItemStyleModel.getItemStyle(['color'])
-        );
+            itemStyle = itemModel.getModel(normalStyleAccessPath).getItemStyle(['color']);
+            hoverItemStyle = itemModel.getModel(emphasisStyleAccessPath).getItemStyle();
 
-        var labelModel = itemModel.getModel(normalLabelAccessPath);
-        var hoverLabelModel = itemModel.getModel(emphasisLabelAccessPath);
-        var lastDim = data.dimensions[data.dimensions.length - 1];
-        var labelText = seriesModel.getFormattedLabel(idx, 'normal')
-                    || data.get(lastDim, idx);
+            symbolRotate = itemModel.getShallow('symbolRotate');
+            symbolOffset = itemModel.getShallow('symbolOffset');
+
+            labelModel = itemModel.getModel(normalLabelAccessPath);
+            hoverLabelModel = itemModel.getModel(emphasisLabelAccessPath);
+            hoverAnimation = itemModel.getShallow('hoverAnimation');
+        }
+        else {
+            hoverItemStyle = zrUtil.extend({}, hoverItemStyle);
+        }
+
         var elStyle = symbolPath.style;
 
-        if (labelModel.get('show')) {
+        symbolPath.rotation = (symbolRotate || 0) * Math.PI / 180 || 0;
+
+        if (symbolOffset) {
+            symbolPath.attr('position', [
+                numberUtil.parsePercent(symbolOffset[0], symbolSize[0]),
+                numberUtil.parsePercent(symbolOffset[1], symbolSize[1])
+            ]);
+        }
+
+        // PENDING setColor before setStyle!!!
+        symbolPath.setColor(color);
+
+        symbolPath.setStyle(itemStyle);
+
+        var opacity = data.getItemVisual(idx, 'opacity');
+        if (opacity != null) {
+            elStyle.opacity = opacity;
+        }
+
+        // Get last value dim
+        var dimensions = data.dimensions.slice();
+        var valueDim;
+        var dataType;
+        while (dimensions.length && (
+            valueDim = dimensions.pop(),
+            dataType = data.getDimensionInfo(valueDim).type,
+            dataType === 'ordinal' || dataType === 'time'
+        )) {} // jshint ignore:line
+
+        if (valueDim != null && labelModel.getShallow('show')) {
             graphic.setText(elStyle, labelModel, color);
-            elStyle.text = labelText;
+            elStyle.text = zrUtil.retrieve(
+                seriesModel.getFormattedLabel(idx, 'normal'),
+                data.get(valueDim, idx)
+            );
         }
         else {
             elStyle.text = '';
         }
-        if (hoverLabelModel.getShallow('show')) {
-            graphic.setText(hoverStyle, hoverLabelModel, color);
-            hoverStyle.text = labelText;
+
+        if (valueDim != null && hoverLabelModel.getShallow('show')) {
+            graphic.setText(hoverItemStyle, hoverLabelModel, color);
+            hoverItemStyle.text = zrUtil.retrieve(
+                seriesModel.getFormattedLabel(idx, 'emphasis'),
+                data.get(valueDim, idx)
+            );
         }
         else {
-            hoverStyle.text = '';
+            hoverItemStyle.text = '';
         }
-
-        graphic.setHoverStyle(symbolPath, hoverStyle);
 
         var size = normalizeSymbolSize(data.getItemVisual(idx, 'symbolSize'));
 
@@ -198,7 +241,10 @@ define(function (require) {
             .off('mouseout')
             .off('emphasis')
             .off('normal');
-        if (itemModel.getShallow('hoverAnimation')) {
+
+        graphic.setHoverStyle(symbolPath, hoverItemStyle);
+
+        if (hoverAnimation && seriesModel.ifEnableAnimation()) {
             var onEmphasis = function() {
                 var ratio = size[1] / size[0];
                 this.animateTo({
@@ -222,11 +268,13 @@ define(function (require) {
 
     symbolProto.fadeOut = function (cb) {
         var symbolPath = this.childAt(0);
+        // Avoid mistaken hover when fading out
+        this.silent = true;
         // Not show text when animating
         symbolPath.style.text = '';
         graphic.updateProps(symbolPath, {
             scale: [0, 0]
-        }, this._seriesModel, cb);
+        }, this._seriesModel, this.dataIndex, cb);
     };
 
     zrUtil.inherits(Symbol, graphic.Group);

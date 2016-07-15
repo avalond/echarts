@@ -13,7 +13,6 @@ define(function (require) {
     var BoundingRect = require('zrender/core/BoundingRect');
     var matrix = require('zrender/core/matrix');
     var numberUtil = require('../../util/number');
-    var modelUtil = require('../../util/model');
     var formatUtil = require('../../util/format');
     var encodeHTML = formatUtil.encodeHTML;
 
@@ -73,30 +72,34 @@ define(function (require) {
 
             this.group.removeAll();
 
-            // var mainGroup = new graphic.Group();
+            if (timelineModel.get('show', true)) {
 
-            var layoutInfo = this._layout(timelineModel, api);
+                var layoutInfo = this._layout(timelineModel, api);
+                var mainGroup = this._createGroup('mainGroup');
+                var labelGroup = this._createGroup('labelGroup');
 
-            var mainGroup = this._createGroup('mainGroup');
-            var labelGroup = this._createGroup('labelGroup');
+                /**
+                 * @private
+                 * @type {module:echarts/component/timeline/TimelineAxis}
+                 */
+                var axis = this._axis = this._createAxis(layoutInfo, timelineModel);
 
-            /**
-             * @private
-             * @type {module:echarts/component/timeline/TimelineAxis}
-             */
-            var axis = this._axis = this._createAxis(layoutInfo, timelineModel);
+                timelineModel.formatTooltip = function (dataIndex) {
+                    return encodeHTML(axis.scale.getLabel(dataIndex));
+                };
 
-            each(
-                ['AxisLine', 'AxisTick', 'Control', 'CurrentPointer'],
-                function (name) {
-                    this['_render' + name](layoutInfo, mainGroup, axis, timelineModel);
-                },
-                this
-            );
+                each(
+                    ['AxisLine', 'AxisTick', 'Control', 'CurrentPointer'],
+                    function (name) {
+                        this['_render' + name](layoutInfo, mainGroup, axis, timelineModel);
+                    },
+                    this
+                );
 
-            this._renderAxisLabel(layoutInfo, labelGroup, axis, timelineModel);
+                this._renderAxisLabel(layoutInfo, labelGroup, axis, timelineModel);
 
-            this._position(layoutInfo, timelineModel);
+                this._position(layoutInfo, timelineModel);
+            }
 
             this._doPlayStop();
         },
@@ -261,8 +264,8 @@ define(function (require) {
                 labelsPosition[1] = mainPosition[1] + labelPosOpt;
             }
 
-            mainGroup.position = mainPosition;
-            labelGroup.position = labelsPosition;
+            mainGroup.attr('position', mainPosition);
+            labelGroup.attr('position', labelsPosition);
             mainGroup.rotation = labelGroup.rotation = layoutInfo.rotation;
 
             setOrigin(mainGroup);
@@ -351,7 +354,6 @@ define(function (require) {
         _renderAxisTick: function (layoutInfo, group, axis, timelineModel) {
             var data = timelineModel.getData();
             var ticks = axis.scale.getTicks();
-            var tooltipHostModel = this._prepareTooltipHostModel(data, timelineModel);
 
             each(ticks, function (value, dataIndex) {
 
@@ -368,29 +370,13 @@ define(function (require) {
 
                 if (itemModel.get('tooltip')) {
                     el.dataIndex = dataIndex;
-                    el.hostModel = tooltipHostModel;
+                    el.dataModel = timelineModel;
                 }
                 else {
-                    el.dataIndex = el.hostModel = null;
+                    el.dataIndex = el.dataModel = null;
                 }
 
             }, this);
-        },
-
-        /**
-         * @private
-         */
-        _prepareTooltipHostModel: function (data, timelineModel) {
-            var tooltipHostModel = modelUtil.createDataFormatModel(
-                {}, data, timelineModel.get('data')
-            );
-            var me = this;
-
-            tooltipHostModel.formatTooltip = function (dataIndex) {
-                return encodeHTML(me._axis.scale.getLabel(dataIndex));
-            };
-
-            return tooltipHostModel;
         },
 
         /**
@@ -423,7 +409,7 @@ define(function (require) {
                     style: {
                         text: labels[dataIndex],
                         textAlign: layoutInfo.labelAlign,
-                        textBaseline: layoutInfo.labelBaseline,
+                        textVerticalAlign: layoutInfo.labelBaseline,
                         textFont: itemTextStyleModel.getFont(),
                         fill: itemTextStyleModel.getTextColor()
                     },

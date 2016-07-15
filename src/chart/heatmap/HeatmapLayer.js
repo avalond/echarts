@@ -7,7 +7,6 @@
  */
 define(function (require) {
 
-    var BRUSH_SIZE = 20;
     var GRADIENT_LEVELS = 256;
     var zrUtil = require('zrender/core/util');
 
@@ -21,7 +20,10 @@ define(function (require) {
         this.canvas = canvas;
 
         this.blurSize = 30;
-        this.opacity = 1;
+        this.pointSize = 20;
+
+        this.maxOpacity = 1;
+        this.minOpacity = 0;
 
         this._gradientPixels = {};
     }
@@ -37,7 +39,7 @@ define(function (require) {
             var brush = this._getBrush();
             var gradientInRange = this._getGradient(data, colorFunc, 'inRange');
             var gradientOutOfRange = this._getGradient(data, colorFunc, 'outOfRange');
-            var r = BRUSH_SIZE + this.blurSize;
+            var r = this.pointSize + this.blurSize;
 
             var canvas = this.canvas;
             var ctx = canvas.getContext('2d');
@@ -63,16 +65,22 @@ define(function (require) {
             var pixels = imageData.data;
             var offset = 0;
             var pixelLen = pixels.length;
+            var minOpacity = this.minOpacity;
+            var maxOpacity = this.maxOpacity;
+            var diffOpacity = maxOpacity - minOpacity;
+
             while(offset < pixelLen) {
                 var alpha = pixels[offset + 3] / 256;
                 var gradientOffset = Math.floor(alpha * (GRADIENT_LEVELS - 1)) * 4;
                 // Simple optimize to ignore the empty data
                 if (alpha > 0) {
                     var gradient = isInRange(alpha) ? gradientInRange : gradientOutOfRange;
+                    // Any alpha > 0 will be mapped to [minOpacity, maxOpacity]
+                    alpha > 0 && (alpha = alpha * diffOpacity + minOpacity);
                     pixels[offset++] = gradient[gradientOffset];
                     pixels[offset++] = gradient[gradientOffset + 1];
                     pixels[offset++] = gradient[gradientOffset + 2];
-                    pixels[offset++] *= this.opacity * gradient[gradientOffset + 3];
+                    pixels[offset++] = gradient[gradientOffset + 3] * alpha * 256;
                 }
                 else {
                     offset += 4;
@@ -91,7 +99,7 @@ define(function (require) {
         _getBrush: function() {
             var brushCanvas = this._brushCanvas || (this._brushCanvas = zrUtil.createCanvas());
             // set brush size
-            var r = BRUSH_SIZE + this.blurSize;
+            var r = this.pointSize + this.blurSize;
             var d = r * 2;
             brushCanvas.width = d;
             brushCanvas.height = d;
@@ -110,7 +118,7 @@ define(function (require) {
 
             // draw circle in the left to the canvas
             ctx.beginPath();
-            ctx.arc(-r, r, BRUSH_SIZE, 0, Math.PI * 2, true);
+            ctx.arc(-r, r, this.pointSize, 0, Math.PI * 2, true);
             ctx.closePath();
             ctx.fill();
             return brushCanvas;

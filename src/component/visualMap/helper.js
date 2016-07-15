@@ -43,7 +43,9 @@ define(function(require) {
                     < ecSize[rParam[1]] * 0.5 ? 0 : 1
             ];
         }
+
     };
+
 
     return helper;
 });

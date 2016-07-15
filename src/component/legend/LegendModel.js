@@ -5,21 +5,54 @@ define(function(require) {
     var zrUtil = require('zrender/core/util');
     var Model = require('../../model/Model');
 
-    return require('../../echarts').extendComponentModel({
+    var LegendModel = require('../../echarts').extendComponentModel({
 
         type: 'legend',
 
         dependencies: ['series'],
 
-        layoutMode: {type: 'box', ignoreSize: true},
+        layoutMode: {
+            type: 'box',
+            ignoreSize: true
+        },
 
         init: function (option, parentModel, ecModel) {
             this.mergeDefaultAndTheme(option, ecModel);
 
             option.selected = option.selected || {};
+        },
 
-            var legendData = zrUtil.map(option.data || [], function (dataItem) {
-                if (typeof dataItem === 'string') {
+        mergeOption: function (option) {
+            LegendModel.superCall(this, 'mergeOption', option);
+        },
+
+        optionUpdated: function () {
+            this._updateData(this.ecModel);
+
+            var legendData = this._data;
+
+            // If selectedMode is single, try to select one
+            if (legendData[0] && this.get('selectedMode') === 'single') {
+                var hasSelected = false;
+                // If has any selected in option.selected
+                for (var i = 0; i < legendData.length; i++) {
+                    var name = legendData[i].get('name');
+                    if (this.isSelected(name)) {
+                        // Force to unselect others
+                        this.select(name);
+                        hasSelected = true;
+                        break;
+                    }
+                }
+                // Try select the first if selectedMode is single
+                !hasSelected && this.select(legendData[0].get('name'));
+            }
+        },
+
+        _updateData: function (ecModel) {
+            var legendData = zrUtil.map(this.get('data') || [], function (dataItem) {
+                // Can be string or number
+                if (typeof dataItem === 'string' || typeof dataItem === 'number') {
                     dataItem = {
                         name: dataItem
                     };
@@ -28,31 +61,6 @@ define(function(require) {
             }, this);
             this._data = legendData;
 
-            this._updateAvailableNames(ecModel);
-
-            // If has any selected in option.selected
-            var selectedMap = this.option.selected;
-            // If selectedMode is single, try to select one
-            if (legendData[0] && this.get('selectedMode') === 'single') {
-                var hasSelected = false;
-                for (var name in selectedMap) {
-                    if (selectedMap[name]) {
-                        this.select(name);
-                        hasSelected = true;
-                    }
-                }
-                // Try select the first if selectedMode is single
-                !hasSelected && this.select(legendData[0].get('name'));
-            }
-        },
-
-        mergeOption: function (option) {
-            this.$superCall('mergeOption', option);
-
-            this._updateAvailableNames(this.ecModel);
-        },
-
-        _updateAvailableNames: function (ecModel) {
             var availableNames = zrUtil.map(ecModel.getSeries(), function (series) {
                 return series.name;
             });
@@ -67,7 +75,6 @@ define(function(require) {
              * @private
              */
             this._availableNames = availableNames;
-
         },
 
         /**
@@ -159,17 +166,28 @@ define(function(require) {
             itemWidth: 25,
             // 图例图形高度
             itemHeight: 14,
+
+            // 图例关闭时候的颜色
+            inactiveColor: '#ccc',
+
             textStyle: {
                 // 图例文字颜色
                 color: '#333'
             },
             // formatter: '',
             // 选择模式，默认开启图例开关
-            selectedMode: true
+            selectedMode: true,
             // 配置默认选中状态，可配合LEGEND.SELECTED事件做动态数据载入
             // selected: null,
             // 图例内容（详见legend.data，数组中每一项代表一个item
             // data: [],
+
+            // Tooltip 相关配置
+            tooltip: {
+                show: false
+            }
         }
     });
+
+    return LegendModel;
 });

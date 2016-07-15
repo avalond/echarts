@@ -1,11 +1,10 @@
 define(function (require) {
 
-    require('./GeoModel');
-
     var Geo = require('./Geo');
 
     var layout = require('../../util/layout');
     var zrUtil = require('zrender/core/util');
+    var numberUtil = require('../../util/number');
 
     var mapDataStores = {};
 
@@ -17,25 +16,67 @@ define(function (require) {
     function resizeGeo (geoModel, api) {
         var rect = this.getBoundingRect();
 
-        var boxLayoutOption = geoModel.getBoxLayoutParams();
-        // 0.75 rate
-        boxLayoutOption.aspect = rect.width / rect.height * 0.75;
+        var boxLayoutOption;
 
-        var viewRect = layout.getLayoutRect(boxLayoutOption, {
-            width: api.getWidth(),
-            height: api.getHeight()
-        });
+        var center = geoModel.get('layoutCenter');
+        var size = geoModel.get('layoutSize');
+
+        var viewWidth = api.getWidth();
+        var viewHeight = api.getHeight();
+
+        var aspectScale = geoModel.get('aspectScale') || 0.75;
+        var aspect = rect.width / rect.height * aspectScale;
+
+        var useCenterAndSize = false;
+        if (center && size) {
+            center = [
+                numberUtil.parsePercent(center[0], viewWidth),
+                numberUtil.parsePercent(center[1], viewHeight)
+            ];
+            size = numberUtil.parsePercent(size, Math.min(viewWidth, viewHeight));
+
+            if (!isNaN(center[0]) && !isNaN(center[1]) && !isNaN(size)) {
+                useCenterAndSize = true;
+            }
+            else {
+                if (__DEV__) {
+                    console.warn('Given layoutCenter or layoutSize data are invalid. Use left/top/width/height instead.');
+                }
+            }
+        }
+
+        var viewRect;
+        if (useCenterAndSize) {
+            var viewRect = {};
+            if (aspect > 1) {
+                // Width is same with size
+                viewRect.width = size;
+                viewRect.height = size / aspect;
+            }
+            else {
+                viewRect.height = size;
+                viewRect.width = size * aspect;
+            }
+            viewRect.y = center[1] - viewRect.height / 2;
+            viewRect.x = center[0] - viewRect.width / 2;
+        }
+        else {
+            // Use left/top/width/height
+            boxLayoutOption = geoModel.getBoxLayoutParams();
+
+            // 0.75 rate
+            boxLayoutOption.aspect = aspect;
+
+            viewRect = layout.getLayoutRect(boxLayoutOption, {
+                width: viewWidth,
+                height: viewHeight
+            });
+        }
 
         this.setViewRect(viewRect.x, viewRect.y, viewRect.width, viewRect.height);
 
-        var roamDetailModel = geoModel.getModel('roamDetail');
-
-        var panX = roamDetailModel.get('x') || 0;
-        var panY = roamDetailModel.get('y') || 0;
-        var zoom = roamDetailModel.get('zoom') || 1;
-
-        this.setPan(panX, panY);
-        this.setZoom(zoom);
+        this.setCenter(geoModel.get('center'));
+        this.setZoom(geoModel.get('zoom'));
     }
 
     /**
@@ -49,7 +90,16 @@ define(function (require) {
         });
     }
 
+    if (__DEV__) {
+        var mapNotExistsError = function (name) {
+            console.error('Map ' + name + ' not exists. You can download map file on http://echarts.baidu.com/download-map.html');
+        };
+    }
+
     var geoCreator = {
+
+        // For deciding which dimensions to use when creating list data
+        dimensions: Geo.prototype.dimensions,
 
         create: function (ecModel, api) {
             var geoList = [];
@@ -58,14 +108,17 @@ define(function (require) {
             ecModel.eachComponent('geo', function (geoModel, idx) {
                 var name = geoModel.get('map');
                 var mapData = mapDataStores[name];
-                // if (!mapData) {
-                    // Warning
-                // }
+                if (__DEV__) {
+                    if (!mapData) {
+                        mapNotExistsError(name);
+                    }
+                }
                 var geo = new Geo(
                     name + idx, name,
                     mapData && mapData.geoJson, mapData && mapData.specialAreas,
                     geoModel.get('nameMap')
                 );
+                geo.zoomLimit = geoModel.get('scaleLimit');
                 geoList.push(geo);
 
                 setGeoCoords(geo, geoModel);
@@ -100,9 +153,11 @@ define(function (require) {
 
             zrUtil.each(mapModelGroupBySeries, function (mapSeries, mapType) {
                 var mapData = mapDataStores[mapType];
-                // if (!mapData) {
-                    // Warning
-                // }
+                if (__DEV__) {
+                    if (!mapData) {
+                        mapNotExistsError(mapSeries[0].get('map'));
+                    }
+                }
 
                 var nameMapList = zrUtil.map(mapSeries, function (singleMapSeries) {
                     return singleMapSeries.get('nameMap');
@@ -112,6 +167,9 @@ define(function (require) {
                     mapData && mapData.geoJson, mapData && mapData.specialAreas,
                     zrUtil.mergeAll(nameMapList)
                 );
+                geo.zoomLimit = zrUtil.retrieve.apply(null, zrUtil.map(mapSeries, function (singleMapSeries) {
+                    return singleMapSeries.get('scaleLimit');
+                }));
                 geoList.push(geo);
 
                 // Inject resize method
@@ -165,6 +223,42 @@ define(function (require) {
          */
         getMap: function (mapName) {
             return mapDataStores[mapName];
+        },
+
+        /**
+         * Fill given regions array
+         * @param  {Array.<Object>} originRegionArr
+         * @param  {string} mapName
+         * @return {Array}
+         */
+        getFilledRegions: function (originRegionArr, mapName) {
+            // Not use the original
+            var regionsArr = (originRegionArr || []).slice();
+
+            var map = geoCreator.getMap(mapName);
+            var geoJson = map && map.geoJson;
+            if (!geoJson) {
+                if (__DEV__) {
+                    mapNotExistsError(mapName);
+                }
+                return originRegionArr;
+            }
+
+            var dataNameMap = {};
+            var features = geoJson.features;
+            for (var i = 0; i < regionsArr.length; i++) {
+                dataNameMap[regionsArr[i].name] = regionsArr[i];
+            }
+
+            for (var i = 0; i < features.length; i++) {
+                var name = features[i].properties.name;
+                if (!dataNameMap[name]) {
+                    regionsArr.push({
+                        name: name
+                    });
+                }
+            }
+            return regionsArr;
         }
     };
 
@@ -179,4 +273,6 @@ define(function (require) {
     echarts.loadMap = function () {};
 
     echarts.registerCoordinateSystem('geo', geoCreator);
+
+    return geoCreator;
 });

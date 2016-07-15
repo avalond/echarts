@@ -255,11 +255,11 @@ define(function(require) {
             if (shape.symbolType === 'pin' && style.textPosition === 'inside') {
                 style.textPosition = ['50%', '40%'];
                 style.textAlign = 'center';
-                style.textBaseline = 'middle';
+                style.textVerticalAlign = 'middle';
             }
         },
 
-        buildPath: function (ctx, shape) {
+        buildPath: function (ctx, shape, inBundle) {
             var symbolType = shape.symbolType;
             var proxySymbol = symbolBuildProxies[symbolType];
             if (shape.symbolType !== 'none') {
@@ -271,7 +271,7 @@ define(function(require) {
                 symbolShapeMakers[symbolType](
                     shape.x, shape.y, shape.width, shape.height, proxySymbol.shape
                 );
-                proxySymbol.buildPath(ctx, proxySymbol.shape);
+                proxySymbol.buildPath(ctx, proxySymbol.shape, inBundle);
             }
         }
     });
@@ -293,7 +293,7 @@ define(function(require) {
                 symbolStyle.fill && (symbolStyle.fill = color);
                 symbolStyle.stroke && (symbolStyle.stroke = color);
             }
-            this.dirty();
+            this.dirty(false);
         }
     };
 

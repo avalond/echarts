@@ -4,7 +4,7 @@ define(function (require) {
     var CANDLE_MIN_NICE_WIDTH = 5;
     var GPA_MIN = 4;
 
-    return function (ecModel, api) {
+    return function (ecModel) {
 
         ecModel.eachSeriesByType('candlestick', function (seriesModel) {
 
@@ -51,7 +51,8 @@ define(function (require) {
                     initBaseline: openVal > closeVal
                         ? ocHighPoint[constDim] : ocLowPoint[constDim], // open point.
                     bodyEnds: bodyEnds,
-                    whiskerEnds: whiskerEnds
+                    whiskerEnds: whiskerEnds,
+                    brushRect: makeBrushRect()
                 });
 
                 function getPoint(val) {
@@ -73,12 +74,27 @@ define(function (require) {
                         : bodyEnds.push(point2, point1);
                 }
 
+                function makeBrushRect() {
+                    var pmin = getPoint(Math.min(openVal, closeVal, lowestVal, highestVal));
+                    var pmax = getPoint(Math.max(openVal, closeVal, lowestVal, highestVal));
+
+                    pmin[variableDim] -= candleWidth / 2;
+                    pmax[variableDim] -= candleWidth / 2;
+
+                    return {
+                        x: pmin[0],
+                        y: pmin[1],
+                        width: constDim ? candleWidth : pmax[0] - pmin[0],
+                        height: constDim ? pmax[1] - pmin[1] : candleWidth
+                    };
+                }
+
             }, true);
         });
     };
 
     function calculateCandleWidth(seriesModel, data) {
-        var baseAxis = seriesModel.getBaseAxisModel().axis;
+        var baseAxis = seriesModel.getBaseAxis();
         var extent;
 
         var bandWidth = baseAxis.type === 'category'

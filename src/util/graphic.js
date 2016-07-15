@@ -24,6 +24,8 @@ define(function(require) {
 
     graphic.Sector = require('zrender/graphic/shape/Sector');
 
+    graphic.Ring = require('zrender/graphic/shape/Ring');
+
     graphic.Polygon = require('zrender/graphic/shape/Polygon');
 
     graphic.Polyline = require('zrender/graphic/shape/Polyline');
@@ -36,9 +38,13 @@ define(function(require) {
 
     graphic.Arc = require('zrender/graphic/shape/Arc');
 
+    graphic.CompoundPath = require('zrender/graphic/CompoundPath');
+
     graphic.LinearGradient = require('zrender/graphic/LinearGradient');
 
     graphic.RadialGradient = require('zrender/graphic/RadialGradient');
+
+    graphic.BoundingRect = require('zrender/core/BoundingRect');
 
     /**
      * Extend shape with parameters
@@ -189,13 +195,18 @@ define(function(require) {
             : (doubledPosition + (positiveOrNegative ? 1 : -1)) / 2;
     };
 
+    function hasFillOrStroke(fillOrStroke) {
+        return fillOrStroke != null && fillOrStroke != 'none';
+    }
+
+    function liftColor(color) {
+        return typeof color === 'string' ? colorTool.lift(color, -0.1) : color;
+    }
+
     /**
      * @private
      */
-    function doSingleEnterHover(el) {
-        if (el.__isHover) {
-            return;
-        }
+    function cacheElementStl(el) {
         if (el.__hoverStlDirty) {
             var stroke = el.style.stroke;
             var fill = el.style.fill;
@@ -203,9 +214,9 @@ define(function(require) {
             // Create hoverStyle on mouseover
             var hoverStyle = el.__hoverStl;
             hoverStyle.fill = hoverStyle.fill
-                || (fill instanceof Gradient ? fill : colorTool.lift(fill, -0.1));
+                || (hasFillOrStroke(fill) ? liftColor(fill) : null);
             hoverStyle.stroke = hoverStyle.stroke
-                || (stroke instanceof Gradient ? stroke : colorTool.lift(stroke, -0.1));
+                || (hasFillOrStroke(stroke) ? liftColor(stroke) : null);
 
             var normalStyle = {};
             for (var name in hoverStyle) {
@@ -218,8 +229,25 @@ define(function(require) {
 
             el.__hoverStlDirty = false;
         }
-        el.setStyle(el.__hoverStl);
-        el.z2 += 1;
+    }
+
+    /**
+     * @private
+     */
+    function doSingleEnterHover(el) {
+        if (el.__isHover) {
+            return;
+        }
+
+        cacheElementStl(el);
+
+        if (el.useHoverLayer) {
+            el.__zr && el.__zr.addHover(el, el.__hoverStl);
+        }
+        else {
+            el.setStyle(el.__hoverStl);
+            el.z2 += 1;
+        }
 
         el.__isHover = true;
     }
@@ -233,8 +261,13 @@ define(function(require) {
         }
 
         var normalStl = el.__normalStl;
-        normalStl && el.setStyle(normalStl);
-        el.z2 -= 1;
+        if (el.useHoverLayer) {
+            el.__zr && el.__zr.removeHover(el);
+        }
+        else {
+            normalStl && el.setStyle(normalStl);
+            el.z2 -= 1;
+        }
 
         el.__isHover = false;
     }
@@ -268,8 +301,12 @@ define(function(require) {
     function setElementHoverStl(el, hoverStl) {
         // If element has sepcified hoverStyle, then use it instead of given hoverStyle
         // Often used when item group has a label element and it's hoverStyle is different
-        el.__hoverStl = el.hoverStyle || hoverStl;
+        el.__hoverStl = el.hoverStyle || hoverStl || {};
         el.__hoverStlDirty = true;
+
+        if (el.__isHover) {
+            cacheElementStl(el);
+        }
     }
 
     /**
@@ -310,7 +347,6 @@ define(function(require) {
      * @param {Object} [hoverStyle]
      */
     graphic.setHoverStyle = function (el, hoverStyle) {
-        hoverStyle = hoverStyle || {};
         el.type === 'group'
             ? el.traverse(function (child) {
                 if (child.type !== 'group') {
@@ -345,41 +381,77 @@ define(function(require) {
         });
     };
 
-    function animateOrSetProps(isUpdate, el, props, animatableModel, cb) {
-        var postfix = isUpdate ? 'Update' : '';
-        var duration = animatableModel
-            && animatableModel.getShallow('animationDuration' + postfix);
-        var animationEasing = animatableModel
-            && animatableModel.getShallow('animationEasing' + postfix);
+    function animateOrSetProps(isUpdate, el, props, animatableModel, dataIndex, cb) {
+        if (typeof dataIndex === 'function') {
+            cb = dataIndex;
+            dataIndex = null;
+        }
+        var animationEnabled = animatableModel
+            && (
+                animatableModel.ifEnableAnimation
+                ? animatableModel.ifEnableAnimation()
+                // Directly use animation property
+                : animatableModel.getShallow('animation')
+            );
 
-        animatableModel && animatableModel.getShallow('animation')
-            ? el.animateTo(props, duration, animationEasing, cb)
-            : (el.attr(props), cb && cb());
+        if (animationEnabled) {
+            var postfix = isUpdate ? 'Update' : '';
+            var duration = animatableModel
+                && animatableModel.getShallow('animationDuration' + postfix);
+            var animationEasing = animatableModel
+                && animatableModel.getShallow('animationEasing' + postfix);
+            var animationDelay = animatableModel
+                && animatableModel.getShallow('animationDelay' + postfix);
+            if (typeof animationDelay === 'function') {
+                animationDelay = animationDelay(dataIndex);
+            }
+            duration > 0
+                ? el.animateTo(props, duration, animationDelay || 0, animationEasing, cb)
+                : (el.attr(props), cb && cb());
+        }
+        else {
+            el.attr(props);
+            cb && cb();
+        }
     }
     /**
      * Update graphic element properties with or without animation according to the configuration in series
      * @param {module:zrender/Element} el
      * @param {Object} props
      * @param {module:echarts/model/Model} [animatableModel]
-     * @param {Function} cb
+     * @param {number} [dataIndex]
+     * @param {Function} [cb]
+     * @example
+     *     graphic.updateProps(el, {
+     *         position: [100, 100]
+     *     }, seriesModel, dataIndex, function () { console.log('Animation done!'); });
+     *     // Or
+     *     graphic.updateProps(el, {
+     *         position: [100, 100]
+     *     }, seriesModel, function () { console.log('Animation done!'); });
      */
-    graphic.updateProps = zrUtil.curry(animateOrSetProps, true);
+    graphic.updateProps = function (el, props, animatableModel, dataIndex, cb) {
+        animateOrSetProps(true, el, props, animatableModel, dataIndex, cb);
+    };
 
     /**
      * Init graphic element properties with or without animation according to the configuration in series
      * @param {module:zrender/Element} el
      * @param {Object} props
      * @param {module:echarts/model/Model} [animatableModel]
+     * @param {number} [dataIndex]
      * @param {Function} cb
      */
-    graphic.initProps = zrUtil.curry(animateOrSetProps, false);
+    graphic.initProps = function (el, props, animatableModel, dataIndex, cb) {
+        animateOrSetProps(false, el, props, animatableModel, dataIndex, cb);
+    };
 
     /**
      * Get transform matrix of target (param target),
      * in coordinate of its ancestor (param ancestor)
      *
      * @param {module:zrender/mixin/Transformable} target
-     * @param {module:zrender/mixin/Transformable} ancestor
+     * @param {module:zrender/mixin/Transformable} [ancestor]
      */
     graphic.getTransform = function (target, ancestor) {
         var mat = matrix.identity([]);
@@ -430,6 +502,52 @@ define(function(require) {
         return Math.abs(vertex[0]) > Math.abs(vertex[1])
             ? (vertex[0] > 0 ? 'right' : 'left')
             : (vertex[1] > 0 ? 'bottom' : 'top');
+    };
+
+    /**
+     * Apply group transition animation from g1 to g2
+     */
+    graphic.groupTransition = function (g1, g2, animatableModel, cb) {
+        if (!g1 || !g2) {
+            return;
+        }
+
+        function getElMap(g) {
+            var elMap = {};
+            g.traverse(function (el) {
+                if (!el.isGroup && el.anid) {
+                    elMap[el.anid] = el;
+                }
+            });
+            return elMap;
+        }
+        function getAnimatableProps(el) {
+            var obj = {
+                position: vector.clone(el.position),
+                rotation: el.rotation
+            };
+            if (el.shape) {
+                obj.shape = zrUtil.extend({}, el.shape);
+            }
+            return obj;
+        }
+        var elMap1 = getElMap(g1);
+
+        g2.traverse(function (el) {
+            if (!el.isGroup && el.anid) {
+                var oldEl = elMap1[el.anid];
+                if (oldEl) {
+                    var newProp = getAnimatableProps(el);
+                    el.attr(getAnimatableProps(oldEl));
+                    graphic.updateProps(el, newProp, animatableModel, el.dataIndex);
+                }
+                // else {
+                //     if (el.previousProps) {
+                //         graphic.updateProps
+                //     }
+                // }
+            }
+        });
     };
 
     return graphic;

@@ -1,13 +1,12 @@
 define(function (require) {
 
     var DataZoomView = require('./DataZoomView');
-    var throttle = require('../../util/throttle');
     var zrUtil = require('zrender/core/util');
     var sliderMove = require('../helper/sliderMove');
-    var RoamController = require('../../component/helper/RoamController');
+    var roams = require('./roams');
     var bind = zrUtil.bind;
 
-    return DataZoomView.extend({
+    var InsideZoomView = DataZoomView.extend({
 
         type: 'dataZoom.inside',
 
@@ -15,13 +14,6 @@ define(function (require) {
          * @override
          */
         init: function (ecModel, api) {
-
-            /**
-             * @private
-             * @type {Object.<string, module:echarts/component/helper/RoamController>}
-             */
-            this._controllers = {};
-
             /**
              * 'throttle' is used in this.dispatchAction, so we save range
              * to avoid missing some 'pan' info.
@@ -35,68 +27,35 @@ define(function (require) {
          * @override
          */
         render: function (dataZoomModel, ecModel, api, payload) {
-            this.$superApply('render', arguments);
+            InsideZoomView.superApply(this, 'render', arguments);
 
-            throttle.createOrUpdate(
-                this,
-                '_dispatchZoomAction',
-                this.dataZoomModel.get('throttle'),
-                'fixRate'
-            );
-
-            // Notice: this._resetInterval() should not be executed when payload.type
-            // is 'dataZoom', origin this._range should be maintained, otherwise 'pan'
-            // or 'zoom' info will be missed because of 'throttle' of this.dispatchAction,
-            if (!payload || payload.type !== 'dataZoom' || payload.from !== this.uid) {
+            // Notice: origin this._range should be maintained, and should not be re-fetched
+            // from dataZoomModel when payload.type is 'dataZoom', otherwise 'pan' or 'zoom'
+            // info will be missed because of 'throttle' of this.dispatchAction.
+            if (roams.shouldRecordRange(payload, dataZoomModel.id)) {
                 this._range = dataZoomModel.getPercentRange();
             }
 
-            this._resetController(api);
-        },
-
-        /**
-         * @override
-         */
-        remove: function () {
-            this.$superApply('remove', arguments);
-
-            var controllers = this._controllers;
-            zrUtil.each(controllers, function (controller) {
-                controller.off('pan').off('zoom');
+            // Reset controllers.
+            var coordInfoList = this.getTargetInfo().cartesians;
+            var allCoordIds = zrUtil.map(coordInfoList, function (coordInfo) {
+                return roams.generateCoordId(coordInfo.model);
             });
-            controllers.length = 0;
 
-            throttle.clear(this, '_dispatchZoomAction');
-        },
-
-        /**
-         * @override
-         */
-        dispose: function () {
-            this.$superApply('dispose', arguments);
-            throttle.clear(this, '_dispatchZoomAction');
-        },
-
-        /**
-         * @private
-         */
-        _resetController: function (api) {
-            var controllers = this._controllers;
-            var targetInfo = this.getTargetInfo();
-
-            zrUtil.each(targetInfo.cartesians, function (item) {
-                // Init controller.
-                var key = 'cartesian' + item.coordIndex;
-                var controller = controllers[key];
-                if (!controller) {
-                    controller = controllers[key] = new RoamController(api.getZr());
-                    controller.enable();
-                    controller.on('pan', bind(this._onPan, this, controller, item));
-                    controller.on('zoom', bind(this._onZoom, this, controller, item));
-                }
-
-                controller.rect = item.model.coordinateSystem.getRect().clone();
-
+            zrUtil.each(coordInfoList, function (coordInfo) {
+                var coordModel = coordInfo.model;
+                roams.register(
+                    api,
+                    {
+                        coordId: roams.generateCoordId(coordModel),
+                        allCoordIds: allCoordIds,
+                        coordinateSystem: coordModel.coordinateSystem,
+                        dataZoomId: dataZoomModel.id,
+                        throttleRate: dataZoomModel.get('throttle', true),
+                        panGetRange: bind(this._onPan, this, coordInfo),
+                        zoomGetRange: bind(this._onZoom, this, coordInfo)
+                    }
+                );
             }, this);
 
             // TODO
@@ -104,44 +63,41 @@ define(function (require) {
         },
 
         /**
-         * @private
+         * @override
          */
-        _onPan: function (controller, coordInfo, dx, dy) {
-            var range = this._range = panCartesian(
-                [dx, dy], this._range, controller, coordInfo
-            );
-
-            if (range) {
-                this._dispatchZoomAction(range);
-            }
+        dispose: function () {
+            roams.unregister(this.api, this.dataZoomModel.id);
+            InsideZoomView.superApply(this, 'dispose', arguments);
+            this._range = null;
         },
 
         /**
          * @private
          */
-        _onZoom: function (controller, coordInfo, scale, mouseX, mouseY) {
+        _onPan: function (coordInfo, controller, dx, dy) {
+            return (
+                this._range = panCartesian(
+                    [dx, dy], this._range, controller, coordInfo
+                )
+            );
+        },
+
+        /**
+         * @private
+         */
+        _onZoom: function (coordInfo, controller, scale, mouseX, mouseY) {
             var dataZoomModel = this.dataZoomModel;
-            scale = 1 / scale;
-            var range = this._range = scaleCartesian(
-                scale, [mouseX, mouseY], this._range,
-                controller, coordInfo, dataZoomModel
+
+            if (dataZoomModel.option.zoomLock) {
+                return this._range;
+            }
+
+            return (
+                this._range = scaleCartesian(
+                    1 / scale, [mouseX, mouseY], this._range,
+                    controller, coordInfo, dataZoomModel
+                )
             );
-
-            this._dispatchZoomAction(range);
-        },
-
-        /**
-         * This action will be throttled.
-         * @private
-         */
-        _dispatchZoomAction: function (range) {
-            this.api.dispatchAction({
-                type: 'dataZoom',
-                from: this.uid,
-                dataZoomId: this.dataZoomModel.id,
-                start: range[0],
-                end: range[1]
-            });
         }
 
     });
@@ -189,15 +145,12 @@ define(function (require) {
         range[0] = (range[0] - percentPoint) * scale + percentPoint;
         range[1] = (range[1] - percentPoint) * scale + percentPoint;
 
-        // FIXME
-        // 改为基于绝对值的方式？
-
         return fixRange(range);
     }
 
     function getDirectionInfo(xy, axisModel, controller) {
         var axis = axisModel.axis;
-        var rect = controller.rect;
+        var rect = controller.rectProvider();
         var ret = {};
 
         if (axis.dim === 'x') {
@@ -228,4 +181,6 @@ define(function (require) {
 
         return range;
     }
+
+    return InsideZoomView;
 });

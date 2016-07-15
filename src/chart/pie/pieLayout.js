@@ -10,7 +10,7 @@ define(function (require) {
     var PI2 = Math.PI * 2;
     var RADIAN = Math.PI / 180;
 
-    return function (seriesType, ecModel, api) {
+    return function (seriesType, ecModel, api, payload) {
         ecModel.eachSeriesByType(seriesType, function (seriesModel) {
             var center = seriesModel.get('center');
             var radius = seriesModel.get('radius');
@@ -37,10 +37,8 @@ define(function (require) {
             var minAngle = seriesModel.get('minAngle') * RADIAN;
 
             var sum = data.getSum('value');
-            if (sum === 0) {
-                sum = data.count();
-            }
-            var unitRadian = Math.PI / sum * 2;
+            // Sum may be 0
+            var unitRadian = Math.PI / (sum || data.count()) * 2;
 
             var clockwise = seriesModel.get('clockwise');
 

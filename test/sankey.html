@@ -1,6 +1,6 @@
 <html>
     <head>
-        <meta chartset="utf-8">
+        <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <script src="esl.js"></script>
         <script src="config.js"></script>
@@ -29,16 +29,27 @@
 
                     window.onresize = function () {
                         chart.resize();
-                    }
+                    };
+
+                    chart.on('click', function (params) {
+                        console.log(params, params.data);
+                    });
+
 
                     $.getJSON('./data/energy.json')
                     .done(function(data) {
+
+                        data.nodes[0].itemStyle = {
+                            normal: {
+                                color: 'red'
+                            }
+                        };
                         chart.setOption({
                             tooltip: {
                                 trigger: 'item',
                                 triggerOn: 'mousemove'
-
                             },
+                            animation: false,
                             series: [
                                 {
                                     type: 'sankey',
@@ -47,6 +58,7 @@
                                     links: data.links,
                                     lineStyle: {
                                         normal: {
+                                            color: 'source',
                                             curveness: 0.5
                                         }
                                     }

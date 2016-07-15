@@ -11,21 +11,32 @@ define(function (require) {
     var textContain = require('zrender/contain/text');
     var axisHelper = {};
 
-    axisHelper.niceScaleExtent = function (axis, model) {
+    /**
+     * Get axis scale extent before niced.
+     */
+    axisHelper.getScaleExtent = function (axis, model) {
         var scale = axis.scale;
+        var originalExtent = scale.getExtent();
+        var span = originalExtent[1] - originalExtent[0];
         if (scale.type === 'ordinal') {
-            return;
+            // If series has no data, scale extent may be wrong
+            if (!isFinite(span)) {
+                return [0, 0];
+            }
+            else {
+                return originalExtent;
+            }
         }
-        var min = model.get('min');
-        var max = model.get('max');
+        var min = model.getMin ? model.getMin() : model.get('min');
+        var max = model.getMax ? model.getMax() : model.get('max');
+        var crossZero = model.getNeedCrossZero
+            ? model.getNeedCrossZero() : !model.get('scale');
         var boundaryGap = model.get('boundaryGap');
         if (!zrUtil.isArray(boundaryGap)) {
             boundaryGap = [boundaryGap || 0, boundaryGap || 0];
         }
         boundaryGap[0] = numberUtil.parsePercent(boundaryGap[0], 1);
         boundaryGap[1] = numberUtil.parsePercent(boundaryGap[1], 1);
-        var originalExtent = scale.getExtent();
-        var span = originalExtent[1] - originalExtent[0];
         var fixMin = true;
         var fixMax = true;
         // Add boundary gap
@@ -37,15 +48,54 @@ define(function (require) {
             max = originalExtent[1] + boundaryGap[1] * span;
             fixMax = false;
         }
-        // TODO Only one data
         if (min === 'dataMin') {
             min = originalExtent[0];
         }
         if (max === 'dataMax') {
             max = originalExtent[1];
         }
-        scale.setExtent(min, max);
-        scale.niceExtent(model.get('splitNumber'), fixMin, fixMax);
+        // Evaluate if axis needs cross zero
+        if (crossZero) {
+            // Axis is over zero and min is not set
+            if (min > 0 && max > 0 && !fixMin) {
+                min = 0;
+            }
+            // Axis is under zero and max is not set
+            if (min < 0 && max < 0 && !fixMax) {
+                max = 0;
+            }
+        }
+        return [min, max];
+    };
+
+    axisHelper.niceScaleExtent = function (axis, model) {
+        var scale = axis.scale;
+        var extent = axisHelper.getScaleExtent(axis, model);
+        var fixMin = (model.getMin ? model.getMin() : model.get('min')) != null;
+        var fixMax = (model.getMax ? model.getMax() : model.get('max')) != null;
+        var splitNumber = model.get('splitNumber');
+        scale.setExtent(extent[0], extent[1]);
+        scale.niceExtent(splitNumber, fixMin, fixMax);
+
+        // Use minInterval to constraint the calculated interval.
+        // If calculated interval is less than minInterval. increase the interval quantity until
+        // it is larger than minInterval.
+        // For example:
+        //  minInterval is 1, calculated interval is 0.2, so increase it to be 1. In this way we can get
+        //  an integer axis.
+        var minInterval = model.get('minInterval');
+        if (isFinite(minInterval) && !fixMin && !fixMax && scale.type === 'interval') {
+            var interval = scale.getInterval();
+            var intervalScale = Math.max(Math.abs(interval), minInterval) / interval;
+            // while (interval < minInterval) {
+            //     var quantity = numberUtil.quantity(interval);
+            //     interval = quantity * 10;
+            //     scaleQuantity *= 10;
+            // }
+            extent = scale.getExtent();
+            scale.setExtent(intervalScale * extent[0], extent[1] * intervalScale);
+            scale.niceExtent(splitNumber);
+        }
 
         // If some one specified the min, max. And the default calculated interval
         // is not good enough. He can specify the interval. It is often appeared
@@ -88,23 +138,7 @@ define(function (require) {
         var dataExtent = axis.scale.getExtent();
         var min = dataExtent[0];
         var max = dataExtent[1];
-        var optMin = axis.model.get('min');
-        var optMax = axis.model.get('max');
-        if (!isNaN(optMin)) {
-            min = Math.min(optMin, min);
-        }
-        if (!isNaN(optMax)) {
-            max = Math.max(optMax, max);
-        }
-        return !((min > 0 && max > 0) || (min < 0 && max < 0))
-            || axisHelper.ifAxisNeedsCrossZero(axis);
-    };
-
-    /**
-     * Check if the axis scale needs include data 0
-     */
-    axisHelper.ifAxisNeedsCrossZero = function (axis) {
-        return !axis.model.get('scale');
+        return !((min > 0 && max > 0) || (min < 0 && max < 0));
     };
 
     /**
@@ -122,13 +156,20 @@ define(function (require) {
         var autoLabelInterval = 0;
         var accumulatedLabelInterval = 0;
 
-        for (var i = 0; i < tickCoords.length; i++) {
+        var step = 1;
+        if (labels.length > 40) {
+            // Simple optimization for large amount of labels
+            step = Math.floor(labels.length / 40);
+        }
+
+        for (var i = 0; i < tickCoords.length; i += step) {
             var tickCoord = tickCoords[i];
             var rect = textContain.getBoundingRect(
                 labels[i], font, 'center', 'top'
             );
             rect[isAxisHorizontal ? 'x' : 'y'] += tickCoord;
-            rect[isAxisHorizontal ? 'width' : 'height'] *= 1.5;
+            // FIXME Magic number 1.5
+            rect[isAxisHorizontal ? 'width' : 'height'] *= 1.3;
             if (!textSpaceTakenRect) {
                 textSpaceTakenRect = rect.clone();
             }
@@ -143,8 +184,10 @@ define(function (require) {
                 accumulatedLabelInterval = 0;
             }
         }
-
-        return autoLabelInterval;
+        if (autoLabelInterval === 0 && step > 1) {
+            return step;
+        }
+        return (autoLabelInterval + 1) * step - 1;
     };
 
     /**

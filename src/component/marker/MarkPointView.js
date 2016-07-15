@@ -2,108 +2,82 @@ define(function (require) {
 
     var SymbolDraw = require('../../chart/helper/SymbolDraw');
     var zrUtil = require('zrender/core/util');
-    var formatUtil = require('../../util/format');
-    var modelUtil = require('../../util/model');
     var numberUtil = require('../../util/number');
-
-    var addCommas = formatUtil.addCommas;
-    var encodeHTML = formatUtil.encodeHTML;
 
     var List = require('../../data/List');
 
     var markerHelper = require('./markerHelper');
 
-    // FIXME
-    var markPointFormatMixin = {
-        getRawDataArray: function () {
-            return this.option.data;
-        },
+    function updateMarkerLayout(mpData, seriesModel, api) {
+        var coordSys = seriesModel.coordinateSystem;
+        mpData.each(function (idx) {
+            var itemModel = mpData.getItemModel(idx);
+            var point;
+            var xPx = numberUtil.parsePercent(itemModel.get('x'), api.getWidth());
+            var yPx = numberUtil.parsePercent(itemModel.get('y'), api.getHeight());
+            if (!isNaN(xPx) && !isNaN(yPx)) {
+                point = [xPx, yPx];
+            }
+            // Chart like bar may have there own marker positioning logic
+            else if (seriesModel.getMarkerPosition) {
+                // Use the getMarkerPoisition
+                point = seriesModel.getMarkerPosition(
+                    mpData.getValues(mpData.dimensions, idx)
+                );
+            }
+            else if (coordSys) {
+                var x = mpData.get(coordSys.dimensions[0], idx);
+                var y = mpData.get(coordSys.dimensions[1], idx);
+                point = coordSys.dataToPoint([x, y]);
 
-        formatTooltip: function (dataIndex) {
-            var data = this.getData();
-            var value = this.getRawValue(dataIndex);
-            var formattedValue = zrUtil.isArray(value)
-                ? zrUtil.map(value, addCommas).join(', ') : addCommas(value);
-            var name = data.getName(dataIndex);
-            return this.name + '<br />'
-                + ((name ? encodeHTML(name) + ' : ' : '') + formattedValue);
-        },
+            }
 
-        getData: function () {
-            return this._data;
-        },
+            // Use x, y if has any
+            if (!isNaN(xPx)) {
+                point[0] = xPx;
+            }
+            if (!isNaN(yPx)) {
+                point[1] = yPx;
+            }
 
-        setData: function (data) {
-            this._data = data;
-        }
-    };
+            mpData.setItemLayout(idx, point);
+        });
+    }
 
-    zrUtil.defaults(markPointFormatMixin, modelUtil.dataFormatMixin);
-
-    require('../../echarts').extendComponentView({
+    require('./MarkerView').extend({
 
         type: 'markPoint',
 
-        init: function () {
-            this._symbolDrawMap = {};
-        },
-
-        render: function (markPointModel, ecModel, api) {
-            var symbolDrawMap = this._symbolDrawMap;
-            for (var name in symbolDrawMap) {
-                symbolDrawMap[name].__keep = false;
-            }
-
+        updateLayout: function (markPointModel, ecModel, api) {
             ecModel.eachSeries(function (seriesModel) {
                 var mpModel = seriesModel.markPointModel;
-                mpModel && this._renderSeriesMP(seriesModel, mpModel, api);
-            }, this);
-
-            for (var name in symbolDrawMap) {
-                if (!symbolDrawMap[name].__keep) {
-                    symbolDrawMap[name].remove();
-                    this.group.remove(symbolDrawMap[name].group);
+                if (mpModel) {
+                    updateMarkerLayout(mpModel.getData(), seriesModel, api);
+                    this.markerGroupMap[seriesModel.name].updateLayout(mpModel);
                 }
-            }
+            }, this);
         },
 
-        _renderSeriesMP: function (seriesModel, mpModel, api) {
+        renderSeries: function (seriesModel, mpModel, ecModel, api) {
             var coordSys = seriesModel.coordinateSystem;
             var seriesName = seriesModel.name;
             var seriesData = seriesModel.getData();
 
-            var symbolDrawMap = this._symbolDrawMap;
+            var symbolDrawMap = this.markerGroupMap;
             var symbolDraw = symbolDrawMap[seriesName];
             if (!symbolDraw) {
                 symbolDraw = symbolDrawMap[seriesName] = new SymbolDraw();
             }
 
-            var mpData = createList(coordSys, seriesData, mpModel);
-            var dims = coordSys && coordSys.dimensions;
+            var mpData = createList(coordSys, seriesModel, mpModel);
 
             // FIXME
-            zrUtil.mixin(mpModel, markPointFormatMixin);
             mpModel.setData(mpData);
+
+            updateMarkerLayout(mpModel.getData(), seriesModel, api);
 
             mpData.each(function (idx) {
                 var itemModel = mpData.getItemModel(idx);
-                var point;
-                var xPx = itemModel.getShallow('x');
-                var yPx = itemModel.getShallow('y');
-                if (xPx != null && yPx != null) {
-                    point = [
-                        numberUtil.parsePercent(xPx, api.getWidth()),
-                        numberUtil.parsePercent(yPx, api.getHeight())
-                    ];
-                }
-                else if (coordSys) {
-                    var x = mpData.get(dims[0], idx);
-                    var y = mpData.get(dims[1], idx);
-                    point = coordSys.dataToPoint([x, y]);
-                }
-
-                mpData.setItemLayout(idx, point);
-
                 var symbolSize = itemModel.getShallow('symbolSize');
                 if (typeof symbolSize === 'function') {
                     // FIXME 这里不兼容 ECharts 2.x，2.x 貌似参数是整个数据？
@@ -127,40 +101,56 @@ define(function (require) {
             // FIXME
             mpData.eachItemGraphicEl(function (el) {
                 el.traverse(function (child) {
-                    child.hostModel = mpModel;
+                    child.dataModel = mpModel;
                 });
             });
 
             symbolDraw.__keep = true;
+
+            symbolDraw.group.silent = mpModel.get('silent') || seriesModel.get('silent');
         }
     });
 
     /**
      * @inner
      * @param {module:echarts/coord/*} [coordSys]
-     * @param {module:echarts/data/List} seriesData
+     * @param {module:echarts/model/Series} seriesModel
      * @param {module:echarts/model/Model} mpModel
      */
-    function createList (coordSys, seriesData, mpModel) {
-        var dataDimensions = seriesData.dimensions;
-
-        var mpData = new List(zrUtil.map(
-            dataDimensions, seriesData.getDimensionInfo, seriesData
-        ), mpModel);
-
+    function createList(coordSys, seriesModel, mpModel) {
+        var coordDimsInfos;
         if (coordSys) {
-            mpData.initData(
-                zrUtil.filter(
-                    zrUtil.map(mpModel.get('data'), zrUtil.curry(
-                        markerHelper.dataTransform, seriesData, coordSys
-                    )),
-                    zrUtil.curry(markerHelper.dataFilter, coordSys)
-                ),
-                null,
-                markerHelper.dimValueGetter
+            coordDimsInfos = zrUtil.map(coordSys && coordSys.dimensions, function (coordDim) {
+                var info = seriesModel.getData().getDimensionInfo(
+                    seriesModel.coordDimToDataDim(coordDim)[0]
+                ) || {}; // In map series data don't have lng and lat dimension. Fallback to same with coordSys
+                info.name = coordDim;
+                return info;
+            });
+        }
+        else {
+            coordDimsInfos =[{
+                name: 'value',
+                type: 'float'
+            }];
+        }
+
+        var mpData = new List(coordDimsInfos, mpModel);
+        var dataOpt = zrUtil.map(mpModel.get('data'), zrUtil.curry(
+                markerHelper.dataTransform, seriesModel
+            ));
+        if (coordSys) {
+            dataOpt = zrUtil.filter(
+                dataOpt, zrUtil.curry(markerHelper.dataFilter, coordSys)
             );
         }
 
+        mpData.initData(dataOpt, null,
+            coordSys ? markerHelper.dimValueGetter : function (item) {
+                return item.value;
+            }
+        );
         return mpData;
     }
+
 });

@@ -7,9 +7,12 @@
 define(function (require) {
 
     var zrUtil = require('zrender/core/util');
+    var modelUtil = require('../util/model');
+    var ComponentModel = require('./Component');
     var each = zrUtil.each;
     var clone = zrUtil.clone;
     var map = zrUtil.map;
+    var merge = zrUtil.merge;
 
     var QUERY_REG = /^(min|max)?(.+)$/;
 
@@ -80,13 +83,13 @@ define(function (require) {
          * @private
          * @type {Array.<number>}
          */
-        this._timelineOptions;
+        this._timelineOptions = [];
 
         /**
          * @private
          * @type {Array.<Object>}
          */
-        this._mediaList;
+        this._mediaList = [];
 
         /**
          * @private
@@ -107,6 +110,12 @@ define(function (require) {
          * @type {Object}
          */
         this._optionBackup;
+
+        /**
+         * @private
+         * @type {Object}
+         */
+        this._newBaseOption;
     }
 
     // timeline.notMerge is not supported in ec3. Firstly there is rearly
@@ -135,18 +144,43 @@ define(function (require) {
             // FIXME
             // 如果 timeline options 或者 media 中设置了某个属性，而baseOption中没有设置，则进行警告。
 
-            this._optionBackup = parseRawOption.call(
-                this, rawOption, optionPreprocessorFuncs
+            var oldOptionBackup = this._optionBackup;
+            var newParsedOption = parseRawOption.call(
+                this, rawOption, optionPreprocessorFuncs, !oldOptionBackup
             );
+            this._newBaseOption = newParsedOption.baseOption;
+
+            // For setOption at second time (using merge mode);
+            if (oldOptionBackup) {
+                // Only baseOption can be merged.
+                mergeOption(oldOptionBackup.baseOption, newParsedOption.baseOption);
+
+                // For simplicity, timeline options and media options do not support merge,
+                // that is, if you `setOption` twice and both has timeline options, the latter
+                // timeline opitons will not be merged to the formers, but just substitude them.
+                if (newParsedOption.timelineOptions.length) {
+                    oldOptionBackup.timelineOptions = newParsedOption.timelineOptions;
+                }
+                if (newParsedOption.mediaList.length) {
+                    oldOptionBackup.mediaList = newParsedOption.mediaList;
+                }
+                if (newParsedOption.mediaDefault) {
+                    oldOptionBackup.mediaDefault = newParsedOption.mediaDefault;
+                }
+            }
+            else {
+                this._optionBackup = newParsedOption;
+            }
         },
 
         /**
+         * @param {boolean} isRecreate
          * @return {Object}
          */
-        mountOption: function () {
+        mountOption: function (isRecreate) {
             var optionBackup = this._optionBackup;
 
-            // FIXME
+            // TODO
             // 如果没有reset功能则不clone。
 
             this._timelineOptions = map(optionBackup.timelineOptions, clone);
@@ -154,7 +188,14 @@ define(function (require) {
             this._mediaDefault = clone(optionBackup.mediaDefault);
             this._currentMediaIndices = [];
 
-            return clone(optionBackup.baseOption);
+            return clone(isRecreate
+                // this._optionBackup.baseOption, which is created at the first `setOption`
+                // called, and is merged into every new option by inner method `mergeOption`
+                // each time `setOption` called, can be only used in `isRecreate`, because
+                // its reliability is under suspicion. In other cases option merge is
+                // proformed by `model.mergeOption`.
+                ? optionBackup.baseOption : this._newBaseOption
+            );
         },
 
         /**
@@ -225,7 +266,7 @@ define(function (require) {
         }
     };
 
-    function parseRawOption(rawOption, optionPreprocessorFuncs) {
+    function parseRawOption(rawOption, optionPreprocessorFuncs, isNew) {
         var timelineOptions = [];
         var mediaList = [];
         var mediaDefault;
@@ -243,6 +284,7 @@ define(function (require) {
             baseOption = baseOption || {};
             timelineOptions = (rawOption.options || []).slice();
         }
+
         // For media query
         if (rawOption.media) {
             baseOption = baseOption || {};
@@ -278,7 +320,7 @@ define(function (require) {
             })),
             function (option) {
                 each(optionPreprocessorFuncs, function (preProcess) {
-                    preProcess(option);
+                    preProcess(option, isNew);
                 });
             }
         );
@@ -338,6 +380,55 @@ define(function (require) {
     function indicesEquals(indices1, indices2) {
         // indices is always order by asc and has only finite number.
         return indices1.join(',') === indices2.join(',');
+    }
+
+    /**
+     * Consider case:
+     * `chart.setOption(opt1);`
+     * Then user do some interaction like dataZoom, dataView changing.
+     * `chart.setOption(opt2);`
+     * Then user press 'reset button' in toolbox.
+     *
+     * After doing that all of the interaction effects should be reset, the
+     * chart should be the same as the result of invoke
+     * `chart.setOption(opt1); chart.setOption(opt2);`.
+     *
+     * Although it is not able ensure that
+     * `chart.setOption(opt1); chart.setOption(opt2);` is equivalents to
+     * `chart.setOption(merge(opt1, opt2));` exactly,
+     * this might be the only simple way to implement that feature.
+     *
+     * MEMO: We've considered some other approaches:
+     * 1. Each model handle its self restoration but not uniform treatment.
+     *     (Too complex in logic and error-prone)
+     * 2. Use a shadow ecModel. (Performace expensive)
+     */
+    function mergeOption(oldOption, newOption) {
+        newOption = newOption || {};
+
+        each(newOption, function (newCptOpt, mainType) {
+            if (newCptOpt == null) {
+                return;
+            }
+
+            var oldCptOpt = oldOption[mainType];
+
+            if (!ComponentModel.hasClass(mainType)) {
+                oldOption[mainType] = merge(oldCptOpt, newCptOpt, true);
+            }
+            else {
+                newCptOpt = modelUtil.normalizeToArray(newCptOpt);
+                oldCptOpt = modelUtil.normalizeToArray(oldCptOpt);
+
+                var mapResult = modelUtil.mappingToExists(oldCptOpt, newCptOpt);
+
+                oldOption[mainType] = map(mapResult, function (item) {
+                    return (item.option && item.exist)
+                        ? merge(item.exist, item.option, true)
+                        : (item.exist || item.option);
+                });
+            }
+        });
     }
 
     return OptionManager;

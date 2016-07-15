@@ -5,7 +5,6 @@
 
 define(function (require) {
 
-    var zrUtil = require('zrender/core/util');
     var number = {};
 
     var RADIAN_EPSILON = 1e-4;
@@ -24,25 +23,48 @@ define(function (require) {
      * @return {(number|Array.<number>}
      */
     number.linearMap = function (val, domain, range, clamp) {
+        var subDomain = domain[1] - domain[0];
+        var subRange = range[1] - range[0];
 
-        if (zrUtil.isArray(val)) {
-            return zrUtil.map(val, function (v) {
-                return number.linearMap(v, domain, range, clamp);
-            });
+        if (subDomain === 0) {
+            return subRange === 0
+                ? range[0]
+                : (range[0] + range[1]) / 2;
         }
 
-        var sub = domain[1] - domain[0];
-
-        if (sub === 0) {
-            return (range[0] + range[1]) / 2;
-        }
-        var t = (val - domain[0]) / sub;
-
+        // Avoid accuracy problem in edge, such as
+        // 146.39 - 62.83 === 83.55999999999999.
+        // See echarts/test/ut/spec/util/number.js#linearMap#accuracyError
+        // It is a little verbose for efficiency considering this method
+        // is a hotspot.
         if (clamp) {
-            t = Math.min(Math.max(t, 0), 1);
+            if (subDomain > 0) {
+                if (val <= domain[0]) {
+                    return range[0];
+                }
+                else if (val >= domain[1]) {
+                    return range[1];
+                }
+            }
+            else {
+                if (val >= domain[0]) {
+                    return range[0];
+                }
+                else if (val <= domain[1]) {
+                    return range[1];
+                }
+            }
+        }
+        else {
+            if (val === domain[0]) {
+                return range[0];
+            }
+            if (val === domain[1]) {
+                return range[1];
+            }
         }
 
-        return t * (range[1] - range[0]) + range[0];
+        return (val - domain[0]) / subDomain * subRange + range[0];
     };
 
     /**
@@ -86,7 +108,7 @@ define(function (require) {
      */
     number.round = function (x) {
         // PENDING
-        return +(+x).toFixed(12);
+        return +(+x).toFixed(10);
     };
 
     number.asc = function (arr) {
@@ -101,6 +123,10 @@ define(function (require) {
      * @param {number} val
      */
     number.getPrecision = function (val) {
+        val = +val;
+        if (isNaN(val)) {
+            return 0;
+        }
         // It is much faster than methods converting number to string as follows
         //      var tmp = val.toString();
         //      return tmp.length - 1 - tmp.indexOf('.');
@@ -153,12 +179,61 @@ define(function (require) {
 
     /**
      * @param {string|Date|number} value
-     * @return {number} timestamp
+     * @return {Date} date
      */
     number.parseDate = function (value) {
-        return value instanceof Date
-            ? value
-            : new Date(typeof value === 'string' ? value.replace(/-/g, '/') : value);
+        if (value instanceof Date) {
+            return value;
+        }
+        else if (typeof value === 'string') {
+            // Treat as ISO format. See issue #3623
+            var ret = new Date(value);
+            if (isNaN(+ret)) {
+                // FIXME new Date('1970-01-01') is UTC, new Date('1970/01/01') is local
+                ret = new Date(new Date(value.replace(/-/g, '/')) - new Date('1970/01/01'));
+            }
+            return ret;
+        }
+
+        return new Date(Math.round(value));
+    };
+
+    /**
+     * Quantity of a number. e.g. 0.1, 1, 10, 100
+     * @param  {number} val
+     * @return {number}
+     */
+    number.quantity = function (val) {
+        return Math.pow(10, Math.floor(Math.log(val) / Math.LN10));
+    };
+
+    // "Nice Numbers for Graph Labels" of Graphic Gems
+    /**
+     * find a “nice” number approximately equal to x. Round the number if round = true, take ceiling if round = false
+     * The primary observation is that the “nicest” numbers in decimal are 1, 2, and 5, and all power-of-ten multiples of these numbers.
+     * @param  {number} val
+     * @param  {boolean} round
+     * @return {number}
+     */
+    number.nice = function (val, round) {
+        var exp10 = number.quantity(val);
+        var f = val / exp10; // between 1 and 10
+        var nf;
+        if (round) {
+            if (f < 1.5) { nf = 1; }
+            else if (f < 2.5) { nf = 2; }
+            else if (f < 4) { nf = 3; }
+            else if (f < 7) { nf = 5; }
+            else { nf = 10; }
+        }
+        else {
+            if (f < 1) { nf = 1; }
+            else if (f < 2) { nf = 2; }
+            else if (f < 3) { nf = 3; }
+            else if (f < 5) { nf = 5; }
+            else { nf = 10; }
+        }
+        return nf * exp10;
     };
 
     return number;

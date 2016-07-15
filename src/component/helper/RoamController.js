@@ -16,7 +16,7 @@ define(function (require) {
 
         var x = e.offsetX;
         var y = e.offsetY;
-        var rect = this.rect;
+        var rect = this.rectProvider && this.rectProvider();
         if (rect && rect.contain(x, y)) {
             this._x = x;
             this._y = y;
@@ -33,7 +33,7 @@ define(function (require) {
 
         if (e.gestureEvent !== 'pinch') {
 
-            if (interactionMutex.isTaken('globalPan', this._zr)) {
+            if (interactionMutex.isTaken(this._zr, 'globalPan')) {
                 return;
             }
 
@@ -65,40 +65,49 @@ define(function (require) {
     }
 
     function mousewheel(e) {
-        eventTool.stop(e.event);
-        var zoomDelta = e.wheelDelta < 0 ? 1.1 : 1 / 1.1;
+        // Convenience:
+        // Mac and VM Windows on Mac: scroll up: zoom out.
+        // Windows: scroll up: zoom in.
+        var zoomDelta = e.wheelDelta > 0 ? 1.1 : 1 / 1.1;
         zoom.call(this, e, zoomDelta, e.offsetX, e.offsetY);
     }
 
     function pinch(e) {
-        if (interactionMutex.isTaken('globalPan', this._zr)) {
+        if (interactionMutex.isTaken(this._zr, 'globalPan')) {
             return;
         }
-
-        eventTool.stop(e.event);
         var zoomDelta = e.pinchScale > 1 ? 1.1 : 1 / 1.1;
         zoom.call(this, e, zoomDelta, e.pinchX, e.pinchY);
     }
 
     function zoom(e, zoomDelta, zoomX, zoomY) {
-        var rect = this.rect;
+        var rect = this.rectProvider && this.rectProvider();
 
         if (rect && rect.contain(zoomX, zoomY)) {
+            // When mouse is out of roamController rect,
+            // default befavoius should be be disabled, otherwise
+            // page sliding is disabled, contrary to expectation.
+            eventTool.stop(e.event);
 
             var target = this.target;
+            var zoomLimit = this.zoomLimit;
 
             if (target) {
                 var pos = target.position;
                 var scale = target.scale;
 
-                var newZoom = this._zoom = this._zoom || 1;
+                var newZoom = this.zoom = this.zoom || 1;
                 newZoom *= zoomDelta;
-                // newZoom = Math.max(
-                //     Math.min(target.maxZoom, newZoom),
-                //     target.minZoom
-                // );
-                var zoomScale = newZoom / this._zoom;
-                this._zoom = newZoom;
+                if (zoomLimit) {
+                    var zoomMin = zoomLimit.min || 0;
+                    var zoomMax = zoomLimit.max || Infinity;
+                    newZoom = Math.max(
+                        Math.min(zoomMax, newZoom),
+                        zoomMin
+                    );
+                }
+                var zoomScale = newZoom / this.zoom;
+                this.zoom = newZoom;
                 // Keep the mouse center when scaling
                 pos[0] -= (zoomX - pos[0]) * (zoomScale - 1);
                 pos[1] -= (zoomY - pos[1]) * (zoomScale - 1);
@@ -119,9 +128,9 @@ define(function (require) {
      *
      * @param {module:zrender/zrender~ZRender} zr
      * @param {module:zrender/Element} target
-     * @param {module:zrender/core/BoundingRect} rect
+     * @param {Function} [rectProvider]
      */
-    function RoamController(zr, target, rect) {
+    function RoamController(zr, target, rectProvider) {
 
         /**
          * @type {module:zrender/Element}
@@ -129,10 +138,20 @@ define(function (require) {
         this.target = target;
 
         /**
-         * @type {module:zrender/core/BoundingRect}
+         * @type {Function}
          */
-        this.rect = rect;
+        this.rectProvider = rectProvider;
 
+        /**
+         * { min: 1, max: 2 }
+         * @type {Object}
+         */
+        this.zoomLimit;
+
+        /**
+         * @type {number}
+         */
+        this.zoom;
         /**
          * @type {module:zrender}
          */
@@ -149,20 +168,28 @@ define(function (require) {
         Eventful.call(this);
 
         /**
-         * @param  {boolean} [controlType=true] Specify the control type, which can be only 'pan' or 'zoom'
+         * Notice: only enable needed types. For example, if 'zoom'
+         * is not needed, 'zoom' should not be enabled, otherwise
+         * default mousewheel behaviour (scroll page) will be disabled.
+         *
+         * @param  {boolean|string} [controlType=true] Specify the control type,
+         *                          which can be null/undefined or true/false
+         *                          or 'pan/move' or 'zoom'/'scale'
          */
         this.enable = function (controlType) {
             // Disable previous first
             this.disable();
+
             if (controlType == null) {
                 controlType = true;
             }
-            if (controlType && controlType !== 'scale') {
+
+            if (controlType === true || (controlType === 'move' || controlType === 'pan')) {
                 zr.on('mousedown', mousedownHandler);
                 zr.on('mousemove', mousemoveHandler);
                 zr.on('mouseup', mouseupHandler);
             }
-            if (controlType && controlType !== 'move') {
+            if (controlType === true || (controlType === 'scale' || controlType === 'zoom')) {
                 zr.on('mousewheel', mousewheelHandler);
                 zr.on('pinch', pinchHandler);
             }

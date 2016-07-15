@@ -1,14 +1,15 @@
 #!/bin/bash
 
-rm -r ../dist
 
-node r.js -o config/echarts.simple.js
-node optimize.js -m simple
+basePath=$(cd `dirname $0`; pwd)
+cd ${basePath}/../
+rm -r dist
 
-node r.js -o config/echarts.common.js
-node optimize.js -m common
+npm run prepublish
 
-node r.js -o config/echarts.js
-node optimize.js -m all
+./node_modules/.bin/webpack
+./node_modules/.bin/webpack -p
+./node_modules/.bin/webpack --config extension/webpack.config.js
+./node_modules/.bin/webpack --config extension/webpack.config.js -p
 
-node r.js -o config/dataTool.js
+

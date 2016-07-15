@@ -3,12 +3,17 @@ define(function (require) {
     var featureManager = require('./featureManager');
     var zrUtil = require('zrender/core/util');
 
-    require('../../echarts').extendComponentModel({
+    var ToolboxModel = require('../../echarts').extendComponentModel({
 
         type: 'toolbox',
 
+        layoutMode: {
+            type: 'box',
+            ignoreSize: true
+        },
+
         mergeDefaultAndTheme: function (option) {
-            this.$superApply('mergeDefaultAndTheme', arguments);
+            ToolboxModel.superApply(this, 'mergeDefaultAndTheme', arguments);
 
             zrUtil.each(this.option.feature, function (featureOpt, featureName) {
                 var Feature = featureManager.get(featureName);
@@ -61,4 +66,6 @@ define(function (require) {
             // feature
         }
     });
-})
+
+    return ToolboxModel;
+});

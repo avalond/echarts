@@ -23,7 +23,9 @@
                 'echarts/chart/map',
                 'echarts/component/title',
                 'echarts/component/legend',
-                'echarts/component/visualMap'
+                'echarts/component/visualMap',
+                'echarts/component/markPoint',
+                'echarts/component/tooltip'
             ], function (echarts) {
 
                 require(['map/js/china'], function () {
@@ -40,9 +42,10 @@
                             borderWidth: 0,
                             shadowColor: 'rgba(0, 0, 0, 0.5)'
                         }
-                    }
+                    };
 
                     chart.setOption({
+                        tooltip: {},
                         title : {
                             text: 'iphone销量',
                             subtext: '纯属虚构',
@@ -69,6 +72,14 @@
                                 map: 'china',
                                 itemStyle: itemStyle,
                                 showLegendSymbol: true,
+                                // zoom: 10,
+                                // center: [115.97, 29.71],
+                                roam: true,
+                                markPoint: {
+                                    data: [{
+                                        coord: [115.97, 29.71]
+                                    }]
+                                },
                                 label: {
                                     normal: {
                                         show: true
@@ -176,6 +187,17 @@
                             }
                         ]
                     });
+
+                    chart.on('click', function (param) {
+                        console.log(param);
+                    });
+                    // setTimeout(function () {
+                    //     chart.setOption({
+                    //         series: [{
+                    //             zoom: 5
+                    //         }]
+                    //     });
+                    // }, 2000);
                 });
             });
 

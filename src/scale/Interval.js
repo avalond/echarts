@@ -23,11 +23,12 @@ define(function (require) {
 
         setExtent: function (start, end) {
             var thisExtent = this._extent;
+            //start,end may be a Number like '25',so...
             if (!isNaN(start)) {
-                thisExtent[0] = start;
+                thisExtent[0] = parseFloat(start);
             }
             if (!isNaN(end)) {
-                thisExtent[1] = end;
+                thisExtent[1] = parseFloat(end);
             }
         },
 
@@ -117,69 +118,75 @@ define(function (require) {
 
         /**
          * Update interval and extent of intervals for nice ticks
-         * Algorithm from d3.js
-         * @param {number} [approxTickNum = 10] Given approx tick number
+         *
+         * @param {number} [splitNumber = 5] Desired number of ticks
          */
-        niceTicks: function (approxTickNum) {
-            approxTickNum = approxTickNum || 10;
+        niceTicks: function (splitNumber) {
+            splitNumber = splitNumber || 5;
             var extent = this._extent;
             var span = extent[1] - extent[0];
-            if (span === Infinity || span <= 0) {
+            if (!isFinite(span)) {
                 return;
             }
-
-            // Figure out step quantity, for example 0.1, 1, 10, 100
-            var interval = Math.pow(10, Math.floor(Math.log(span / approxTickNum) / Math.LN10));
-            var err = approxTickNum / span * interval;
-
-            // Filter ticks to get closer to the desired count.
-            if (err <= 0.15) {
-                interval *= 10;
-            }
-            else if (err <= 0.3) {
-                interval *= 5;
-            }
-            else if (err <= 0.5) {
-                interval *= 3;
-            }
-            else if (err <= 0.75) {
-                interval *= 2;
+            // User may set axis min 0 and data are all negative
+            // FIXME If it needs to reverse ?
+            if (span < 0) {
+                span = -span;
+                extent.reverse();
             }
 
+            // From "Nice Numbers for Graph Labels" of Graphic Gems
+            // var niceSpan = numberUtil.nice(span, false);
+            var step = numberUtil.nice(span / splitNumber, true);
+
+            // Niced extent inside original extent
             var niceExtent = [
-                numberUtil.round(mathCeil(extent[0] / interval) * interval),
-                numberUtil.round(mathFloor(extent[1] / interval) * interval)
+                numberUtil.round(mathCeil(extent[0] / step) * step),
+                numberUtil.round(mathFloor(extent[1] / step) * step)
             ];
 
-            this._interval = interval;
+            this._interval = step;
             this._niceExtent = niceExtent;
         },
 
         /**
          * Nice extent.
-         * @param {number} [approxTickNum = 10] Given approx tick number
+         * @param {number} [splitNumber = 5] Given approx tick number
          * @param {boolean} [fixMin=false]
          * @param {boolean} [fixMax=false]
          */
-        niceExtent: function (approxTickNum, fixMin, fixMax) {
+        niceExtent: function (splitNumber, fixMin, fixMax) {
             var extent = this._extent;
             // If extent start and end are same, expand them
             if (extent[0] === extent[1]) {
-                // Expand extent
-                var expandSize = extent[0] / 2 || 1;
-                extent[0] -= expandSize;
-                extent[1] += expandSize;
+                if (extent[0] !== 0) {
+                    // Expand extent
+                    var expandSize = extent[0];
+                    // In the fowllowing case
+                    //      Axis has been fixed max 100
+                    //      Plus data are all 100 and axis extent are [100, 100].
+                    // Extend to the both side will cause expanded max is larger than fixed max.
+                    // So only expand to the smaller side.
+                    if (!fixMax) {
+                        extent[1] += expandSize / 2;
+                        extent[0] -= expandSize / 2;
+                    }
+                    else {
+                        extent[0] -= expandSize / 2;
+                    }
+                }
+                else {
+                    extent[1] = 1;
+                }
             }
+            var span = extent[1] - extent[0];
             // If there are no data and extent are [Infinity, -Infinity]
-            if (extent[1] === -Infinity && extent[0] === Infinity) {
+            if (!isFinite(span)) {
+                extent[0] = 0;
                 extent[1] = 1;
-                extent[0] = -1;
-                this._niceExtent = [-1, 1];
-                this._interval = 0.5;
-                return;
             }
 
-            this.niceTicks(approxTickNum, fixMin, fixMax);
+            this.niceTicks(splitNumber);
 
             // var extent = this._extent;
             var interval = this._interval;
